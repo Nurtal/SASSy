@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oisa.example/schemas/scene_schemas/immune_ontogeny_v1",
+  "title": "OISA Immune Ontogeny Scene Schema v1",
+  "description": "Maps OISA biological entities to 3D scene objects for the Godot renderer.",
+  "type": "object",
+  "required": ["scene_version", "scene_objects"],
+  "properties": {
+    "scene_version": { "type": "string" },
+    "scene_objects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["entity_id", "scene_object_id", "compartment"],
+        "properties": {
+          "entity_id":       { "type": "string" },
+          "scene_object_id": { "type": "string" },
+          "mesh_ref":        { "type": "string" },
+          "compartment": {
+            "enum": ["bone_marrow", "blood", "thymus", "peripheral_ln"]
+          }
+        }
+      }
+    }
+  },
+  "scene_version": "1.0",
+  "scene_objects": [
+    { "entity_id": "CL:0000037",  "scene_object_id": "HSC_sphere",    "mesh_ref": "res://meshes/cell_sphere.tres", "compartment": "bone_marrow" },
+    { "entity_id": "CL:0000051",  "scene_object_id": "CLP_sphere",    "mesh_ref": "res://meshes/cell_sphere.tres", "compartment": "bone_marrow" },
+    { "entity_id": "CL:0002420",  "scene_object_id": "DN1_sphere",    "mesh_ref": "res://meshes/cell_sphere.tres", "compartment": "bone_marrow" },
+    { "entity_id": "CL:0000893",  "scene_object_id": "DP_sphere",     "mesh_ref": "res://meshes/cell_sphere.tres", "compartment": "thymus" },
+    { "entity_id": "CL:0000898",  "scene_object_id": "NaiveT_sphere", "mesh_ref": "res://meshes/cell_sphere.tres", "compartment": "peripheral_ln" },
+    { "entity_id": "CL:0000624",  "scene_object_id": "CD4T_sphere",   "mesh_ref": "res://meshes/cell_sphere.tres", "compartment": "peripheral_ln" },
+    { "entity_id": "CL:0000625",  "scene_object_id": "CD8T_sphere",   "mesh_ref": "res://meshes/cell_sphere.tres", "compartment": "peripheral_ln" }
+  ]
+}

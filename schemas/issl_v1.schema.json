@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oisa.example/schemas/issl_v1",
+  "title": "ISSL — Internal Simulation State Log v1",
+  "description": "Record emitted by each OISA model at every checkpoint.",
+  "type": "object",
+  "required": ["envelope", "continuous_state", "discrete_events",
+               "export_signals", "internal_parameters", "watchdog"],
+  "additionalProperties": false,
+  "properties": {
+
+    "envelope": {
+      "type": "object",
+      "required": ["model_id", "model_version", "sim_time_s", "schema_uri", "formalism"],
+      "additionalProperties": false,
+      "properties": {
+        "model_id":      { "type": "string" },
+        "model_version": { "type": "string" },
+        "sim_time_s":    { "type": "number", "minimum": 0 },
+        "schema_uri":    { "type": "string" },
+        "formalism":     { "enum": ["ODE", "ABM", "hybrid"] }
+      }
+    },
+
+    "continuous_state": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["entity_id", "label", "count", "unit"],
+        "additionalProperties": false,
+        "properties": {
+          "entity_class":    { "enum": ["obo", "custom"] },
+          "entity_id":       { "type": "string" },
+          "label":           { "type": "string" },
+          "count":           { "type": "number" },
+          "unit":            { "type": "string" },
+          "fitness":         { "type": ["number", "null"] },
+          "surface_markers": { "type": "array", "items": { "type": "string" } },
+          "ci_95": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": { "type": "number" }
+          }
+        }
+      }
+    },
+
+    "discrete_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["event_type", "entity_id", "count", "sim_time_s"],
+        "additionalProperties": false,
+        "properties": {
+          "event_type":      { "type": "string" },
+          "entity_id":       { "type": "string" },
+          "count":           { "type": "integer", "minimum": 0 },
+          "sim_time_s":      { "type": "number", "minimum": 0 },
+          "n_realisations":  { "type": "integer", "minimum": 1 },
+          "variance":        { "type": ["number", "null"] }
+        }
+      }
+    },
+
+    "export_signals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["signal_id", "entity_id", "flux", "unit"],
+        "additionalProperties": false,
+        "properties": {
+          "signal_id":  { "type": "string" },
+          "entity_id":  { "type": "string" },
+          "flux":       { "type": "number" },
+          "unit":       { "type": "string" },
+          "lag_s":      { "type": ["number", "null"] },
+          "ci_95": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": { "type": "number" }
+          }
+        }
+      }
+    },
+
+    "internal_parameters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["param_id", "value", "unit"],
+        "additionalProperties": false,
+        "properties": {
+          "param_id": { "type": "string" },
+          "value":    { "type": "number" },
+          "unit":     { "type": "string" },
+          "ci_95": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": { "type": "number" }
+          },
+          "source": { "type": "string" }
+        }
+      }
+    },
+
+    "watchdog": {
+      "type": "object",
+      "required": ["health_status", "next_checkpoint_s"],
+      "additionalProperties": false,
+      "properties": {
+        "health_status":     { "enum": ["ok", "degraded", "failed"] },
+        "ood_flag":          { "type": "boolean" },
+        "divergence_score":  { "type": ["number", "null"] },
+        "next_checkpoint_s": { "type": "number", "minimum": 0 }
+      }
+    }
+
+  }
+}

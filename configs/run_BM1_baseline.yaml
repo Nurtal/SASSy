@@ -1,0 +1,22 @@
+# COMP-BM1: Bone marrow ODE in isolation — §5.1
+# Single model, 30 days, no signal routing.
+
+oisa_version: "1.0"
+
+models:
+  - id: bm_haematopoiesis
+    formalism: ODE
+    executable: models/bm_haematopoiesis/model.py
+    issl_port: "tcp://localhost:5010"
+    delta_t_s: 21600   # 6 h
+
+global_clock:
+  start_s: 0
+  end_s: 2592000       # 30 days
+  checkpoint_interval_s: 86400
+
+renderer:
+  format: "OISA-render-v1"
+  target: "file:logs/BM1/render_stream.ndjson"
+  emit_interval_s: 86400
+  scene_schema_uri: "schemas/scene_schemas/immune_ontogeny_v1.json"

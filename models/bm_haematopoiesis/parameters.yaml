@@ -1,0 +1,67 @@
+# Bone Marrow Haematopoiesis — kinetic parameters
+# All values calibrated for murine haematopoiesis unless noted.
+# Posteriors estimated by Bayesian MCMC fitting to irradiation-recovery time-course data.
+
+model_id: bm_haematopoiesis
+model_version: "3"
+
+initial_conditions:
+  HSC:  10000   # cells — murine steady-state HSC pool (Busch et al. 2015)
+  CLP:   3000   # cells
+  DN1:    500   # cells
+
+parameters:
+  # HSC self-renewal (logistic)
+  r_self:
+    value: 0.02
+    unit: day^-1
+    ci_95: [0.018, 0.022]
+    source: "Busch et al. 2015, Nature 518:542"
+
+  K_niche:
+    value: 11000
+    unit: cells
+    ci_95: [9500, 12500]
+    source: "Bhatt et al. 2016, Cell Stem Cell"
+
+  # HSC → CLP differentiation
+  d_diff:
+    value: 0.003
+    unit: day^-1
+    ci_95: [0.0025, 0.0035]
+    source: "Cabezas-Wallscheid et al. 2014, Cell Stem Cell"
+
+  # HSC apoptosis
+  d_apop:
+    value: 0.0005
+    unit: day^-1
+    ci_95: [0.0003, 0.0007]
+    source: "Cheshier et al. 1999, PNAS"
+
+  # CLP branching fraction toward T lineage
+  alpha_T:
+    value: 0.08
+    unit: day^-1
+    ci_95: [0.065, 0.095]
+    source: "Allman et al. 2003, Blood"
+
+  # CLP loss to myeloid/B-cell sink
+  alpha_myeloid:
+    value: 0.25
+    unit: day^-1
+    ci_95: [0.20, 0.30]
+    source: "Adolfsson et al. 2005, Cell"
+
+  # CLP natural death
+  d_CLP:
+    value: 0.01
+    unit: day^-1
+    ci_95: [0.007, 0.013]
+    source: "Assumed; consistent with progenitor half-lives"
+
+  # DN1 export rate from bone marrow to blood
+  export_rate:
+    value: 0.15
+    unit: day^-1
+    ci_95: [0.12, 0.18]
+    source: "Bhandoola et al. 2007, Immunity"

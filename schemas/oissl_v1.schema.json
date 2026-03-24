@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oisa.example/schemas/oissl_v1",
+  "title": "OISSL — Orchestrator ISSL v1",
+  "description": "Unified output record emitted by the OISA orchestrator at each global checkpoint.",
+  "type": "object",
+  "required": ["envelope", "global_immune_state", "composition_events", "render_entities"],
+  "additionalProperties": false,
+  "properties": {
+
+    "envelope": {
+      "type": "object",
+      "required": ["orchestrator_version", "sim_time_s", "run_id", "config_uri"],
+      "additionalProperties": false,
+      "properties": {
+        "orchestrator_version": { "type": "string" },
+        "sim_time_s":           { "type": "number", "minimum": 0 },
+        "run_id":               { "type": "string" },
+        "config_uri":           { "type": "string" }
+      }
+    },
+
+    "global_immune_state": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["model_id", "sim_time_s", "snapshot"],
+        "additionalProperties": false,
+        "properties": {
+          "model_id":   { "type": "string" },
+          "sim_time_s": { "type": "number", "minimum": 0 },
+          "snapshot":   {
+            "type": "array",
+            "description": "Copy of continuous_state from the model's latest ISSL record.",
+            "items": { "type": "object" }
+          }
+        }
+      }
+    },
+
+    "composition_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "sim_time_s"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "enum": [
+              "signal_emitted",
+              "signal_delivered",
+              "constraint_violation",
+              "watchdog_alert",
+              "transfer_invoked"
+            ]
+          },
+          "sim_time_s":        { "type": "number", "minimum": 0 },
+          "signal_id":         { "type": "string" },
+          "source_model":      { "type": "string" },
+          "target_model":      { "type": "string" },
+          "lag_s":             { "type": ["number", "null"] },
+          "value":             { "type": ["number", "null"] },
+          "constraint_id":     { "type": "string" },
+          "severity":          { "enum": ["warning", "error"] },
+          "message":           { "type": "string" }
+        }
+      }
+    },
+
+    "render_entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["entity_id", "model_id", "count"],
+        "additionalProperties": false,
+        "properties": {
+          "entity_id":      { "type": "string" },
+          "label":          { "type": "string" },
+          "model_id":       { "type": "string" },
+          "count":          { "type": "number" },
+          "scene_object_id":{ "type": "string" }
+        }
+      }
+    }
+
+  }
+}

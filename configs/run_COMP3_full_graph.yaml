@@ -1,0 +1,57 @@
+# COMP3: Full immune ontogeny graph — §5.4
+# BM → blood_transit → thymus → peripheral LN
+# All four models, 30 days.
+
+oisa_version: "1.0"
+
+models:
+  - id: bm_haematopoiesis
+    formalism: ODE
+    executable: models/bm_haematopoiesis/model.py
+    issl_port: "tcp://localhost:5010"
+    delta_t_s: 21600   # 6 h
+
+  - id: blood_transit
+    formalism: ODE
+    executable: models/blood_transit/model.py
+    issl_port: "tcp://localhost:5011"
+    delta_t_s: null    # transfer model — invoked on-demand
+
+  - id: thymus_selection
+    formalism: ABM
+    executable: models/thymus_selection/model.py
+    issl_port: "tcp://localhost:5012"
+    delta_t_s: 86400   # 24 h
+
+  - id: peripheral_ln
+    formalism: ODE
+    executable: models/peripheral_ln/model.py
+    issl_port: "tcp://localhost:5013"
+    delta_t_s: 43200   # 12 h
+
+edges:
+  - source: bm_haematopoiesis
+    signal_id: bm_haematopoiesis.progenitor_export
+    target: thymus_selection
+    lag: "model:blood_transit"
+    activation_threshold: 0.0
+
+  - source: thymus_selection
+    signal_id: thymus_selection.naive_T_export
+    target: peripheral_ln
+    lag: "constant:172800"   # 2-day homing lag (naïve T cells seeding periphery)
+    activation_threshold: 0.0
+
+transfer_models:
+  - blood_transit
+
+global_clock:
+  start_s: 0
+  end_s: 2592000             # 30 days
+  checkpoint_interval_s: 86400
+
+renderer:
+  format: "OISA-render-v1"
+  target: "file:logs/COMP3/render_stream.ndjson"
+  emit_interval_s: 86400
+  scene_schema_uri: "schemas/scene_schemas/immune_ontogeny_v1.json"

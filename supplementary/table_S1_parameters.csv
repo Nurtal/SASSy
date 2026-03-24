@@ -1,0 +1,28 @@
+model_id,param_id,value,unit,ci_95_low,ci_95_high,source_doi,notes
+bm_haematopoiesis,r_self,0.02,day^-1,0.018,0.022,10.1038/nature14242,HSC self-renewal rate (logistic)
+bm_haematopoiesis,K_niche,11000,cells,9500,12500,10.1016/j.stem.2016.05.003,HSC niche carrying capacity
+bm_haematopoiesis,d_diff,0.003,day^-1,0.0025,0.0035,10.1016/j.stem.2014.06.016,HSC→CLP differentiation rate
+bm_haematopoiesis,d_apop,0.0005,day^-1,0.0003,0.0007,10.1073/pnas.96.7.3823,HSC apoptosis rate
+bm_haematopoiesis,alpha_T,0.08,day^-1,0.065,0.095,10.1182/blood-2003-02-0582,CLP→T lineage branching fraction
+bm_haematopoiesis,alpha_myeloid,0.25,day^-1,0.20,0.30,10.1016/j.cell.2005.05.025,CLP→myeloid/B-cell sink rate
+bm_haematopoiesis,d_CLP,0.01,day^-1,0.007,0.013,,CLP natural death rate (assumed)
+bm_haematopoiesis,export_rate,0.15,day^-1,0.12,0.18,10.1016/j.immuni.2007.06.002,DN1 export rate from BM to blood
+blood_transit,k_homing,0.35,day^-1,0.28,0.42,10.1016/j.immuni.2007.06.002,Thymic homing rate constant
+blood_transit,k_death,0.08,day^-1,0.05,0.11,10.1038/nri1301,Cell death/margination during transit
+blood_transit,stop_fraction,0.95,dimensionless,0.95,0.95,,Integration stop criterion (modelling convention)
+thymus_selection,theta_low,0.30,dimensionless,0.25,0.35,10.1016/0092-8674(94)90252-6,Lower bound of positive selection TCR affinity window
+thymus_selection,theta_high,2.50,dimensionless,2.20,2.80,10.1016/0092-8674(94)90252-6,Upper bound of positive selection TCR affinity window
+thymus_selection,theta_negative,3.50,dimensionless,3.20,3.80,10.1016/0092-8674(87)90477-6,Negative selection TCR affinity threshold (medulla)
+thymus_selection,p_encounter_cortex,0.30,probability·step^-1,0.22,0.38,,Encounter probability per step in cortex
+thymus_selection,p_encounter_medulla,0.15,probability·step^-1,0.10,0.20,,Encounter probability per step in medulla
+thymus_selection,p_transition_DP,0.05,probability·step^-1,0.03,0.07,10.1038/nri834,DN→DP transition probability per step
+thymus_selection,p_migrate_medulla,0.10,probability·step^-1,0.07,0.13,,SP cortex→medulla migration probability per step
+thymus_selection,medullary_dwell_steps,72,steps,60,84,10.1098/rstb.2001.0925,Medullary dwell time before export (at 1h/step = 3 days)
+thymus_selection,cd4_fraction,0.65,dimensionless,0.60,0.70,10.1016/S1074-7613(96)80003-X,CD4/CD8 lineage commitment ratio at SP stage
+peripheral_ln,S4,200000,cells,180000,220000,10.1016/j.jtbi.2006.09.030,Homeostatic set point for naive CD4+ T-cell pool
+peripheral_ln,S8,100000,cells,90000,110000,10.1016/j.jtbi.2006.09.030,Homeostatic set point for naive CD8+ T-cell pool
+peripheral_ln,rho_4,0.003,day^-1,0.002,0.004,10.1016/j.jtbi.2006.09.030,Homeostatic proliferation rate constant (CD4+)
+peripheral_ln,rho_8,0.003,day^-1,0.002,0.004,10.1016/j.jtbi.2006.09.030,Homeostatic proliferation rate constant (CD8+)
+peripheral_ln,d_act,0.001,day^-1,0.0007,0.0013,10.1038/nature06843,Tonic activation loss rate
+peripheral_ln,d_death,0.002,day^-1,0.0015,0.0025,10.1038/nature06843,Natural naive T-cell death rate
+peripheral_ln,cd4_fraction,0.65,dimensionless,0.60,0.70,10.1016/S1074-7613(96)80003-X,Fraction of thymic export assigned to CD4+ pool

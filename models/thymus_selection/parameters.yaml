@@ -1,0 +1,78 @@
+# Thymic T-cell Selection — ABM parameters
+# All values calibrated for murine thymic selection (wild-type).
+
+model_id: thymus_selection
+model_version: "2"
+
+abm:
+  n_realisations: 12      # independent realisations per checkpoint
+  substep_h: 1            # sub-step size within 24-h checkpoint
+
+# TCR affinity distribution (log-normal)
+tcr_affinity:
+  mu:    0.0              # mean of ln(affinity)
+  sigma: 0.8              # std of ln(affinity)
+  source: "Gascoigne et al. 2001, Nat Rev Immunol"
+
+parameters:
+  # Positive selection window [theta_low, theta_high]
+  theta_low:
+    value: 0.30
+    unit: dimensionless
+    ci_95: [0.25, 0.35]
+    source: "Hogquist et al. 1994, Cell 76:17"
+
+  theta_high:
+    value: 2.50
+    unit: dimensionless
+    ci_95: [2.20, 2.80]
+    source: "Hogquist et al. 1994, Cell 76:17"
+
+  # Negative selection threshold (medullary)
+  theta_negative:
+    value: 3.50
+    unit: dimensionless
+    ci_95: [3.20, 3.80]
+    source: "Kappler et al. 1987, Cell 49:273"
+
+  # Encounter probability per time step (cortex)
+  p_encounter_cortex:
+    value: 0.30
+    unit: probability·step^-1
+    ci_95: [0.22, 0.38]
+    source: "Bhatt et al. 2016, Cell Stem Cell; Modeling assumption"
+
+  # Encounter probability per time step (medulla)
+  p_encounter_medulla:
+    value: 0.15
+    unit: probability·step^-1
+    ci_95: [0.10, 0.20]
+    source: "Modeling assumption consistent with Gallegos & Bevan 2004"
+
+  # DN→DP transition rate (per step, in cortex)
+  p_transition_DP:
+    value: 0.05
+    unit: probability·step^-1
+    ci_95: [0.03, 0.07]
+    source: "Shortman & Liu 2002, Nat Rev Immunol"
+
+  # SP → medulla migration probability (per step)
+  p_migrate_medulla:
+    value: 0.10
+    unit: probability·step^-1
+    ci_95: [0.07, 0.13]
+    source: "Modeling assumption"
+
+  # Medullary dwell time before export (steps)
+  medullary_dwell_steps:
+    value: 72
+    unit: steps
+    ci_95: [60, 84]
+    source: "Sprent & Kishimoto 2002, Philos Trans R Soc"
+
+  # CD4/CD8 lineage commitment ratio at SP stage
+  cd4_fraction:
+    value: 0.65
+    unit: dimensionless
+    ci_95: [0.60, 0.70]
+    source: "Jiang et al. 1996, Immunity"

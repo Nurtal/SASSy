@@ -1,0 +1,22 @@
+# COMP-THY1: Thymus ABM in isolation with constant synthetic input — §5.1
+# A fixed 100 cells/day import is injected via CalibrationBridge.
+
+oisa_version: "1.0"
+
+models:
+  - id: thymus_selection
+    formalism: ABM
+    executable: models/thymus_selection/model.py
+    issl_port: "tcp://localhost:5012"
+    delta_t_s: 86400   # 24 h
+
+global_clock:
+  start_s: 0
+  end_s: 2592000       # 30 days
+  checkpoint_interval_s: 86400
+
+renderer:
+  format: "OISA-render-v1"
+  target: "file:logs/THY1/render_stream.ndjson"
+  emit_interval_s: 86400
+  scene_schema_uri: "schemas/scene_schemas/immune_ontogeny_v1.json"

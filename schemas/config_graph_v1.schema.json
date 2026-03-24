@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oisa.example/schemas/config_graph_v1",
+  "title": "OISA Configuration Graph v1",
+  "description": "YAML configuration graph that declares models, signal edges, and global clock.",
+  "type": "object",
+  "required": ["oisa_version", "models", "global_clock"],
+  "additionalProperties": false,
+  "properties": {
+
+    "oisa_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$"
+    },
+
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "formalism", "executable", "issl_port"],
+        "additionalProperties": false,
+        "properties": {
+          "id":         { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+          "formalism":  { "enum": ["ODE", "ABM", "hybrid"] },
+          "executable": { "type": "string" },
+          "issl_port":  { "type": "string", "pattern": "^tcp://" },
+          "delta_t_s":  { "type": ["number", "null"], "exclusiveMinimum": 0 }
+        }
+      }
+    },
+
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "signal_id", "target", "lag"],
+        "additionalProperties": false,
+        "properties": {
+          "source":               { "type": "string" },
+          "signal_id":            { "type": "string" },
+          "target":               { "type": "string" },
+          "lag": {
+            "type": "string",
+            "pattern": "^(constant:\\d+|model:[a-zA-Z_][a-zA-Z0-9_]*)$"
+          },
+          "activation_threshold": { "type": ["number", "null"] }
+        }
+      }
+    },
+
+    "transfer_models": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+
+    "global_clock": {
+      "type": "object",
+      "required": ["start_s", "end_s", "checkpoint_interval_s"],
+      "additionalProperties": false,
+      "properties": {
+        "start_s":               { "type": "number", "minimum": 0 },
+        "end_s":                 { "type": "number", "minimum": 0 },
+        "checkpoint_interval_s": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+
+    "renderer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "format":           { "type": "string" },
+        "target":           { "type": "string" },
+        "emit_interval_s":  { "type": "number", "exclusiveMinimum": 0 },
+        "scene_schema_uri": { "type": "string" }
+      }
+    }
+
+  }
+}

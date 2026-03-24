@@ -1,0 +1,27 @@
+# Blood Transit Kinetics — kinetic parameters
+# Models fate of DN1 progenitors from bone marrow egress to thymic arrival.
+
+model_id: blood_transit
+model_version: "1"
+
+parameters:
+  # Thymic homing rate
+  k_homing:
+    value: 0.35
+    unit: day^-1
+    ci_95: [0.28, 0.42]
+    source: "Bhandoola et al. 2007, Immunity 26:753"
+
+  # Cell death / margination during transit
+  k_death:
+    value: 0.08
+    unit: day^-1
+    ci_95: [0.05, 0.11]
+    source: "Schwarz & Bhandoola 2004, Nat Rev Immunol"
+
+  # Integration stop criterion: fraction of N0 homed or lost
+  stop_fraction:
+    value: 0.95
+    unit: dimensionless
+    ci_95: [0.95, 0.95]
+    source: "Modelling convention"
