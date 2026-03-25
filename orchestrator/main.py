@@ -105,22 +105,34 @@ def _connect_sockets(
         sockets[model_id] = sock
 
     # Wait for all models to come up by sending a benign "ping" (step at t=-1)
-    deadline = time.monotonic() + _MODEL_CONNECT_TIMEOUT_S
-    for model_id, sock in sockets.items():
+    for model_id, port in [(cfg["id"], cfg["issl_port"]) for cfg in model_cfgs]:
         logger.info("Waiting for model %s …", model_id)
         connected = False
+        deadline = time.monotonic() + _MODEL_CONNECT_TIMEOUT_S
         while time.monotonic() < deadline:
+            # Recreate socket each attempt: REQ sockets cannot send again after
+            # a send that was never replied to.
+            sock = ctx.socket(zmq.REQ)
+            sock.setsockopt(zmq.LINGER, 0)
+            sock.connect(port)
             sock.send_json({"cmd": "step", "sim_time_s": -1.0, "signals": []})
             if sock.poll(_MODEL_PING_INTERVAL_MS):
                 reply = sock.recv_json()
+                sock.close()
                 connected = True
                 logger.info("Model %s ready (reply: %s)", model_id, reply.get("status"))
                 break
+            sock.close()
             time.sleep(0.05)
         if not connected:
             logger.error("Model %s did not respond within %.0f s — aborting.",
                          model_id, _MODEL_CONNECT_TIMEOUT_S)
             sys.exit(1)
+        # Re-open the final persistent socket for this model
+        sock = ctx.socket(zmq.REQ)
+        sock.setsockopt(zmq.LINGER, 0)
+        sock.connect(port)
+        sockets[model_id] = sock
 
     return sockets
 
@@ -138,7 +150,11 @@ def _shutdown_models(
             pass
         sock.close()
     for model_id, proc in procs.items():
-        proc.wait(timeout=5.0)
+        try:
+            proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            proc.wait()
         logger.info("Model %s exited with code %s", model_id, proc.returncode)
 
 

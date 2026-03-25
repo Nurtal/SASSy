@@ -1,6 +1,7 @@
-.venv/*
+.venv/
 CLAUDE.md
-logs/*
-orchestrator/__pycache__/*
-models/__pycache__/*
-analysis/__pycache__/*
+logs/
+results/
+**/__pycache__/
+**/*.pyc
+*.egg-info/
