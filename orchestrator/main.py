@@ -78,10 +78,12 @@ def _launch_models(
         model_out  = output_dir / "issl" / model_id
         model_out.mkdir(parents=True, exist_ok=True)
 
+        extra_args = cfg.get("model_args", [])
         cmd = [
             sys.executable, executable,
             "--port", port,
             "--output-dir", str(output_dir / "issl"),
+            *extra_args,
         ]
         logger.info("Launching model %s: %s", model_id, " ".join(cmd))
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

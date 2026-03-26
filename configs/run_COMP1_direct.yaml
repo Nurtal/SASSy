@@ -15,6 +15,7 @@ models:
     executable: models/thymus_selection/model.py
     issl_port: "tcp://localhost:5012"
     delta_t_s: 86400   # 24 h
+    model_args: ["--baseline-import", "0"]  # coupled run: no artificial pre-loading
 
 edges:
   - source: bm_haematopoiesis

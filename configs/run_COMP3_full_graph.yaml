@@ -22,6 +22,7 @@ models:
     executable: models/thymus_selection/model.py
     issl_port: "tcp://localhost:5012"
     delta_t_s: 86400   # 24 h
+    model_args: ["--baseline-import", "0"]  # coupled run: no artificial pre-loading
 
   - id: peripheral_ln
     formalism: ODE
@@ -47,7 +48,7 @@ transfer_models:
 
 global_clock:
   start_s: 0
-  end_s: 2592000             # 30 days
+  end_s: 31536000            # 365 days — required to resolve peripheral LN homeostatic relaxation (τ ≈ 167 days)
   checkpoint_interval_s: 86400
 
 renderer:

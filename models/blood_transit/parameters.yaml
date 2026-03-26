@@ -19,9 +19,15 @@ parameters:
     ci_95: [0.05, 0.11]
     source: "Schwarz & Bhandoola 2004, Nat Rev Immunol"
 
-  # Integration stop criterion: fraction of N0 homed or lost
+  # Integration stop criterion: fraction of N0 homed or lost.
+  # Defines the effective transit lag: t_stop = -ln(1 - stop_fraction) / k_total.
+  # With k_total = 0.43 day^-1:
+  #   stop_fraction=0.95 → t_stop=6.97 days (95th percentile — too conservative)
+  #   stop_fraction=0.82 → t_stop=3.99 days (matches murine literature: 1-4 days)
+  # Murine T-cell progenitors circulate for 1-4 days before thymic entry
+  # (Schwarz & Bhandoola 2004, Nat Rev Immunol 4:812; Scimone et al. 2006, Blood 107:3585).
   stop_fraction:
-    value: 0.95
+    value: 0.82
     unit: dimensionless
-    ci_95: [0.95, 0.95]
-    source: "Modelling convention"
+    ci_95: [0.75, 0.90]
+    source: "Schwarz & Bhandoola 2004, Nat Rev Immunol 4:812 — murine progenitor transit 1-4 days; Scimone et al. 2006, Blood 107:3585"

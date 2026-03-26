@@ -25,7 +25,8 @@
           "formalism":  { "enum": ["ODE", "ABM", "hybrid"] },
           "executable": { "type": "string" },
           "issl_port":  { "type": "string", "pattern": "^tcp://" },
-          "delta_t_s":  { "type": ["number", "null"], "exclusiveMinimum": 0 }
+          "delta_t_s":  { "type": ["number", "null"], "exclusiveMinimum": 0 },
+          "model_args": { "type": "array", "items": { "type": "string" } }
         }
       }
     },

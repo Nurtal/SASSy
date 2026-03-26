@@ -49,8 +49,9 @@ This repository provides:
 
 - The **ISSL and OISSL JSON schemas** (in `schemas/`)
 - A **reference orchestrator implementation** (in `orchestrator/`)
-- **Four model implementations** used in the paper (in `models/`)
+- **Four model implementations** used in the paper (in `models/`), all calibrated to *Mus musculus* C57BL/6 data
 - **Ready-to-run configuration graphs** for all five simulation runs from the paper (in `configs/`)
+- **A figure generation script** that renders all paper figures from ISSL logs (in `figures/`)
 - **Analysis notebooks** for reproducing paper figures (in `analysis/`)
 
 **Visualisation** (3D Godot renderer) is handled in a separate repository, out of the scope of this repo
@@ -130,6 +131,14 @@ oisa/
 │   ├── config_graph_reference.md   # Configuration graph field reference
 │   └── adding_a_model.md           # Step-by-step guide for contributors
 │
+├── figures/                        # Figure generation
+│   ├── generate_figures.py         # Renders all paper figures from ISSL logs
+│   ├── BM1_baseline.png
+│   ├── THY1_baseline.png
+│   ├── COMP1_direct.png
+│   ├── COMP2_transfer.png
+│   └── COMP3_full_graph.png
+│
 ├── supplementary/
 │   └── table_S1_parameters.csv     # All model parameter values + sources
 │
@@ -149,13 +158,18 @@ cd oisa
 conda env create -f environment.yml
 conda activate oisa
 
-# 2. Run the full four-model composition (COMP-3 from the paper)
-python orchestrator/main.py --config configs/run_COMP3_full_graph.yaml
+# 2. Run the full four-model composition (COMP-3 from the paper; 365-day simulation)
+PYTHONPATH=. python orchestrator/main.py \
+    --config configs/run_COMP3_full_graph.yaml \
+    --run-id latest
 
 # 3. Inspect the output logs
-ls logs/COMP3_*/          # per-model ISSL logs + orchestrator OISSL
+ls results/COMP3/latest/          # per-model ISSL logs + orchestrator OISSL
 
-# 4. Open the analysis notebook for Figure 5
+# 4. Generate figures
+python figures/generate_figures.py
+
+# 5. Open the analysis notebook for Figure 5
 jupyter lab analysis/notebooks/fig5_fig6_full_graph.ipynb
 ```
 
@@ -218,13 +232,14 @@ The configuration graph is a YAML file with five top-level keys:
 oisa_version: "1.0"
 
 models:           # list of model nodes (id, formalism, executable, issl_port, delta_t_s)
+                  #   optional: model_args (list of extra CLI arguments passed to the model process)
 edges:            # directed signal flows (source, signal_id, target, lag, activation_threshold)
 transfer_models:  # optional models on edges (invoked by the transfer dispatcher)
 global_clock:     # GSimT parameters (start_s, end_s, checkpoint_interval_s)
 renderer:         # OISSL output configuration (format, target, emit_interval_s, scene_schema_uri)
 ```
 
-The `lag` field on an edge is either `constant:N` (fixed N-second delay) or `model:ID` (the lag is read from the output of a named transfer model). See [`docs/config_graph_reference.md`](docs/config_graph_reference.md) for the full schema.
+The `lag` field on an edge is either `constant:N` (fixed N-second delay) or `model:ID` (the lag is read from the output of a named transfer model). The optional `model_args` list on a model node passes additional command-line arguments to the model subprocess at startup (e.g. `["--baseline-import", "0"]` to disable synthetic thymic import when running in composition). See [`docs/config_graph_reference.md`](docs/config_graph_reference.md) for the full schema.
 
 ### The orchestrator
 
@@ -244,23 +259,27 @@ The orchestrator emits its own log format — the **OISSL** (Orchestrator ISSL) 
 
 **Biological scope:** Models the bone marrow niche from HSC self-renewal through multipotent progenitor commitment to early T-lineage progenitor (DN1 / ETP) export. Does not model myeloid or B-cell lineages explicitly; they are included as a competing-fate sink term.
 
+**Model version:** v4 (5-compartment). Species: *Mus musculus* C57BL/6, wild-type adult (8–12 weeks).
+
 **Step-by-step model construction:**
 
-1. **Define the state vector.** The model tracks three compartments: HSC pool size (cells), common lymphoid progenitor (CLP) pool size (cells), and early T-lineage progenitor (DN1/ETP) pool size (cells). Each compartment is a continuous scalar variable.
+1. **Define the state vector.** The model tracks five compartments along the HSC→T-lineage axis: haematopoietic stem cell (HSC), multipotent progenitor (MPP), lymphoid-primed multipotent progenitor (LMPP), common lymphoid progenitor (CLP), and early T-lineage progenitor (DN1/ETP). Each compartment is a continuous scalar variable (cells).
 
-2. **HSC self-renewal and loss.** HSCs self-renew at a density-dependent rate (logistic growth toward a niche carrying capacity) and are lost by differentiation into CLPs at a constant per-cell rate. A small death rate accounts for apoptosis. Parameters: self-renewal rate constant, carrying capacity, differentiation rate, apoptosis rate.
+2. **HSC self-renewal and loss.** HSCs self-renew with logistic density dependence toward a niche carrying capacity (`K_niche = 11 000 cells`) and are lost by differentiation into MPPs (`d_HSC_MPP = 0.003 day⁻¹`) and apoptosis (`d_apop = 0.0005 day⁻¹`). At equilibrium, `HSC_eq ≈ 9 075 cells`.
 
-3. **CLP production and export.** CLPs are produced from HSC differentiation and lost by further differentiation into DN1 progenitors or into the myeloid/B-cell sink. The branching fraction toward the T-lineage is a parameter calibrated from published lineage-tracing data.
+3. **MPP transit amplification.** MPPs undergo transit amplification before lineage commitment: they self-renew at `r_MPP = 0.20 day⁻¹` while exiting to LMPP at `d_MPP_LMPP = 0.15 day⁻¹` and dying at `d_MPP_death = 0.07 day⁻¹`. The net loss rate `λ_MPP = d_MPP_LMPP + d_MPP_death − r_MPP = 0.020 day⁻¹ > 0` ensures stability. At equilibrium, `MPP_eq ≈ 1 361 cells`.
 
-4. **DN1/ETP production and export flux.** DN1 cells are produced from CLP differentiation and exit the bone marrow into the circulation. The export flux is the quantity that populates the `export_signals` section of the ISSL record at each checkpoint.
+4. **LMPP lymphoid restriction.** A fraction `f_lymphoid = 0.35` of MPP differentiation output is committed to the lymphoid fate (→ LMPP); the remainder enters the myeloid/erythroid sink (not tracked). LMPPs exit to CLP at `d_LMPP_CLP = 0.08 day⁻¹`. At equilibrium, `LMPP_eq ≈ 595 cells`.
 
-5. **Niche signalling feedback (optional).** A feedback term captures the effect of stromal cell-derived cytokines (CXCL12, SCF) on HSC self-renewal rate. When this term is active, the model requires an input signal from a stromal niche sub-model (or a constant basal cytokine level).
+5. **CLP and DN1 production.** CLPs are produced from LMPP differentiation and lost to T-lineage commitment (`alpha_T = 0.08 day⁻¹`), B/NK lineages (`d_CLP_other = 0.05 day⁻¹`), and apoptosis. DN1 cells are produced from CLP T-lineage commitment and exit the bone marrow at `export_rate = 0.15 day⁻¹`. At equilibrium, the export flux is approximately **27.2 cells·day⁻¹** — within the published murine range of 10–100 cells·day⁻¹.
 
-6. **ISSL emission.** At each checkpoint (`delta_t_s = 21600`, i.e. every 6 hours), the model serialises the three compartment values, their analytical `ci_95` (propagated from parameter posterior variances via sensitivity analysis), the surface marker profile of the exported DN1 cells (`CD34+`, `CD117+`, `CD44+`), and the current parameter estimates into an ISSL record. The `export_signals` section contains the DN1 export flux with entity ID `CL:0002420`.
+6. **Niche signalling feedback (optional).** A feedback term captures the effect of stromal cell-derived cytokines (CXCL12, SCF) on HSC self-renewal rate. In the baseline configuration, this is held at a constant basal level.
 
-7. **Parameter calibration.** All kinetic parameters are drawn from published murine haematopoiesis literature (sources in `supplementary/table_S1_parameters.csv`). Bayesian posterior distributions were estimated using a Markov Chain Monte Carlo procedure fitting the model to published time-course data of HSC reconstitution following irradiation. The `internal_parameters` section of the ISSL records the posterior mean and `ci_95` for each parameter at each checkpoint.
+7. **ISSL emission.** At each checkpoint (`delta_t_s = 21600`, i.e. every 6 hours), the model serialises all five compartment values with first-order relative-σ `ci_95` (propagated from parameter posterior variances), the surface marker profiles of each population, and the current parameter estimates. The `export_signals` section contains the DN1 export flux with entity ID `CL:0002420` (signal ID: `bm_haematopoiesis.progenitor_export`). These identifiers are stable across model versions and are required for orchestrator signal routing.
 
-**Key outputs logged in ISSL:** HSC count, CLP count, DN1 count, DN1 export flux (cells·day⁻¹), HSC fitness score, parameter posteriors.
+8. **Parameter calibration.** All kinetic parameters are drawn from published murine haematopoiesis literature (Busch et al. 2015, Adolfsson et al. 2005, Bhandoola et al. 2007, and others — see `models/bm_haematopoiesis/parameters.yaml`). CI-95 bounds use first-order sensitivity propagation; for MPP in the near-balanced regime (true sensitivity S(r_MPP) ≈ 10), a conservative S=1 bound is reported as a documented lower bound on uncertainty.
+
+**Key outputs logged in ISSL:** HSC, MPP, LMPP, CLP, DN1 counts; DN1 export flux (cells·day⁻¹); `ci_95` on all compartments; parameter posteriors.
 
 ---
 
@@ -280,7 +299,7 @@ The orchestrator emits its own log format — the **OISSL** (Orchestrator ISSL) 
 
 3. **First-order cell loss.** Cells leave the transit pool by two processes: thymic homing (cells successfully arriving at the thymus) and death/margination (cells that are lost before reaching the thymus). Both are modelled as first-order processes with rate constants calibrated from published data on DN1 progenitor half-life in peripheral blood.
 
-4. **Transit duration.** The characteristic transit time (mean time from BM egress to thymic arrival) is a model parameter. The ODE is integrated until the cumulative homing flux reaches 95% of its asymptotic value; the elapsed integration time is the lag value written to the ISSL `export_signals` section.
+4. **Transit duration.** The characteristic transit time (mean time from BM egress to thymic arrival) is a model parameter. The ODE is integrated until the cumulative homing flux reaches 82% of its asymptotic value (the 82nd percentile, calibrated to the published murine transit window of 1–4 days; Schwarz & Bhandoola 2004, Scimone et al. 2006), yielding a lag of approximately **4 days**. The elapsed integration time is the lag value written to the ISSL `export_signals` section.
 
 5. **ISSL emission.** The model emits a single ISSL record at the end of the transit simulation. The `export_signals` section contains: the number of viable cells delivered to the thymus (`flux`), the computed transit lag in seconds (`lag_s`, which the orchestrator reads to schedule delivery), and the `ci_95` on both quantities.
 
@@ -363,8 +382,8 @@ All five runs from the paper are provided as ready-to-run configuration files:
 | `run_BM1_baseline.yaml` | Bone marrow ODE in isolation, 30 days | §5.1 |
 | `run_THY1_baseline.yaml` | Thymus ABM in isolation, constant synthetic input, 30 days | §5.1 |
 | `run_COMP1_direct.yaml` | BM-ODE → Thymus-ABM, direct coupling, no lag | §5.2 |
-| `run_COMP2_transfer.yaml` | BM-ODE → transit-ODE → Thymus-ABM, model-derived lag | §5.3 |
-| `run_COMP3_full_graph.yaml` | All four models, full immune ontogeny graph, 30 days | §5.4 |
+| `run_COMP2_transfer.yaml` | BM-ODE → transit-ODE → Thymus-ABM, model-derived lag (~4 days) | §5.3 |
+| `run_COMP3_full_graph.yaml` | All four models, full immune ontogeny graph, **365 days** | §5.4 |
 
 Run any of them with:
 
@@ -375,7 +394,7 @@ python orchestrator/main.py --config configs/run_COMP3_full_graph.yaml \
 ```
 
 Output is written to `logs/COMP3/`:
-- `logs/COMP3/issl/BM_haematopoiesis_v3/` — per-checkpoint ISSL records from Model 1
+- `logs/COMP3/issl/BM_haematopoiesis_v4/` — per-checkpoint ISSL records from Model 1
 - `logs/COMP3/issl/Thymus_selection_v2/` — per-checkpoint ISSL records from Model 3
 - (... etc. for all models)
 - `logs/COMP3/oissl/` — per-checkpoint OISSL records from the orchestrator
@@ -413,7 +432,7 @@ To load and inspect all checkpoints for a single model:
 ```python
 from analysis.utils.oissl_parser import load_issl_series
 
-records = load_issl_series("logs/COMP3/issl/BM_haematopoiesis_v3/")
+records = load_issl_series("logs/COMP3/issl/BM_haematopoiesis_v4/")
 
 # records is a list of dicts, one per checkpoint, sorted by sim_time_s
 hsc_counts = [r["continuous_state"][0]["count"] for r in records]

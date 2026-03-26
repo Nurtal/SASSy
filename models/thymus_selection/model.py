@@ -64,6 +64,7 @@ class Thymocyte:
     fate: str = "alive" # alive|pos_selected|neg_deleted|neglect_dead|exported
     lineage: str = ""   # CD4|CD8 (set at DP→SP)
     medullary_dwell: int = 0  # steps spent in medulla after positive selection
+    dp_steps: int = 0   # steps spent at DP stage (for max_dp_age_steps check)
 
 
 # ---------------------------------------------------------------------------
@@ -114,27 +115,40 @@ class ThymicRealisation:
             # --- DP stage: positive selection in cortex
             if agent.stage == "DP":
                 if agent.zone == "cortex":
-                    if self._rng.random() < p["p_encounter_cortex"]:
+                    agent.dp_steps += 1
+                    # Age-based neglect death: DP cells that exceed their
+                    # biological lifespan without receiving a selection signal die.
+                    if agent.dp_steps >= int(p["max_dp_age_steps"]):
+                        agent.fate = "neglect_dead"
+                        self.neglect_count += 1
+                        # Not added to survivors → removed from simulation
+                    elif self._rng.random() < p["p_encounter_cortex"]:
                         aff = agent.tcr_affinity
                         if aff < p["theta_low"]:
-                            # Neglect death
+                            # Neglect death on pMHC encounter (affinity too low)
                             agent.fate = "neglect_dead"
                             self.neglect_count += 1
                         elif aff <= p["theta_high"]:
-                            # Positive selection → become SP
-                            agent.fate = "pos_selected"
+                            # Positive selection → become SP.
+                            # fate stays "alive" so the agent is not skipped by the
+                            # `if agent.fate != "alive": continue` guard next sub-step.
+                            agent.fate = "alive"
                             self.pos_sel_count += 1
                             lineage = "CD4" if self._rng.random() < p["cd4_fraction"] else "CD8"
                             agent.lineage = lineage
                             agent.stage = "CD4SP" if lineage == "CD4" else "CD8SP"
                             agent.zone = "cortex"  # will migrate to medulla next steps
                         else:
-                            # High affinity DP → candidate for negative selection
-                            # Clonal deletion at DP stage for very high affinity
+                            # High affinity DP → negative selection at DP stage
                             agent.fate = "neg_deleted"
                             self.neg_sel_count += 1
-                        # If not yet selected, fate unchanged → keep trying
-                    survivors.append(agent)
+                        # Only keep agent if still alive (fixes ghost accumulation:
+                        # previously survivors.append was unconditional for DP)
+                        if agent.fate == "alive":
+                            survivors.append(agent)
+                    else:
+                        # No encounter this step — keep agent alive for next step
+                        survivors.append(agent)
                 continue
 
             # --- SP stage: migrate to medulla, then negative selection
@@ -191,7 +205,8 @@ class ThymusSelection(ModelBase):
     MODEL_VERSION = "2"
     DELTA_T_S = 86_400.0  # 24 h
 
-    def __init__(self, port: str, output_dir: Path) -> None:
+    def __init__(self, port: str, output_dir: Path,
+                 baseline_import_override: float | None = None) -> None:
         super().__init__(
             model_id=self.MODEL_ID,
             model_version=self.MODEL_VERSION,
@@ -208,6 +223,11 @@ class ThymusSelection(ModelBase):
         self._n_realisations: int = cfg["abm"]["n_realisations"]
         self._substep_h: int = cfg["abm"]["substep_h"]
         self._steps_per_checkpoint = int(24 / self._substep_h)
+
+        # Allow caller to override baseline_import (e.g. pass 0.0 in coupled
+        # runs to prevent artificial pool pre-loading during upstream lag periods).
+        if baseline_import_override is not None:
+            self._p["baseline_import"] = baseline_import_override
 
         # One RNG per realisation for reproducibility
         base_rng = np.random.default_rng(seed=42)
@@ -231,7 +251,10 @@ class ThymusSelection(ModelBase):
         """Advance all realisations by one checkpoint (24 h = substep_h-h sub-steps)."""
         self._last_sim_time_s = sim_time_s + self.DELTA_T_S
 
-        # Parse incoming progenitor signal
+        # Parse incoming progenitor signal.
+        # If no upstream edge delivers a signal (e.g. THY1 standalone), fall back
+        # to the baseline_import parameter (steady-state BM export estimate).
+        signal_received = False
         n_import_mean = 0.0
         n_import_sigma = 0.0
         for sig in signals:
@@ -241,7 +264,14 @@ class ThymusSelection(ModelBase):
                 if "ci_95" in sig:
                     ci = sig["ci_95"]
                     n_import_sigma = (ci[1] - ci[0]) / (2 * 1.96)
+                signal_received = True
                 break
+        if not signal_received:
+            baseline = self._p.get("baseline_import", 0.0)
+            if baseline > 0.0:
+                n_import_mean = baseline
+                ci = self._p_ci.get("baseline_import", [baseline, baseline])
+                n_import_sigma = (ci[1] - ci[0]) / (2 * 1.96)
 
         # Per-realisation results
         exported_counts = []
@@ -427,9 +457,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="OISA — Thymus Selection ABM")
     parser.add_argument("--port", default="tcp://*:5012")
     parser.add_argument("--output-dir", default="logs/run/issl")
+    parser.add_argument(
+        "--baseline-import", type=float, default=None,
+        help="Override baseline progenitor import (cells/day). "
+             "Pass 0 in coupled runs to prevent artificial pre-loading during upstream lags. "
+             "Defaults to the baseline_import value in parameters.yaml.",
+    )
     args = parser.parse_args()
 
-    model = ThymusSelection(port=args.port, output_dir=Path(args.output_dir))
+    model = ThymusSelection(
+        port=args.port,
+        output_dir=Path(args.output_dir),
+        baseline_import_override=args.baseline_import,
+    )
     model.run()
 
 
