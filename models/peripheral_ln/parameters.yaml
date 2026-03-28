@@ -70,3 +70,17 @@ parameters:
     unit: dimensionless
     ci_95: [0.60, 0.70]
     source: "Jiang et al. 1996, Immunity — murine thymic SP output ratio"
+
+  # Fraction of total thymic export routed to this LN compartment.
+  # Calibrated so that at steady thymic output the CD4 pool is maintained
+  # near S4.  Required CD4 import = d_total × S4 = 0.003 × 200 000 = 600 cells/day;
+  # total = 600 / cd4_fraction ≈ 923 cells/day.  With steady thymic biological
+  # flux ≈ 700 000 cells/day in COMP3: fraction ≈ 923 / 700 000 ≈ 0.0013.
+  # Rough biological interpretation: ~1/770 of thymic output arrives at one
+  # representative peripheral compartment (consistent with ~750 secondary
+  # lymphoid organs/vessels draining thymic emigrants; Scollay & Godfrey 1995).
+  lymph_node_fraction:
+    value: 0.0013
+    unit: dimensionless
+    ci_95: [0.0009, 0.0018]
+    source: "Calibrated from Scollay & Godfrey 1995, Semin Immunol — murine thymic output distribution; De Boer & Perelson 2013, Front Immunol"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Model 1 — Bone Marrow Haematopoiesis (ODE, v4 — 5-compartment)
+Model 1 — Bone Marrow Haematopoiesis (ODE, v6 — 5-compartment)
 
 State vector: [HSC, MPP, LMPP, CLP, DN1]
 
@@ -12,17 +12,27 @@ ODEs (all rates in day⁻¹; converted from seconds before integration):
   dCLP/dt  = d_LMPP_CLP × LMPP − (alpha_T + d_CLP_other + d_CLP_death) × CLP
   dDN1/dt  = alpha_T × CLP − export_rate × DN1
 
-Export flux (cells/day): export_rate × DN1  ≈ 27.2 at equilibrium
-  (4.3× the v3 value; within murine literature range 10–100 cells·day⁻¹)
+Export flux (cells/day): export_rate × DN1  ≈ 59.55 at equilibrium
+  (within murine literature range 10–100 cells·day⁻¹; Bhandoola et al. 2007)
 
-Key equilibrium values (v4):
-  HSC = 9075, MPP = 1361, LMPP = 595, CLP = 340, DN1 = 181
+Analytical steady-state (computed from parameters; v6 exact floats):
+  HSC  =  9075.0000   (consistent with Bhatt 2016: ~10,000 LSK CD150+CD48-)
+  MPP  = 27225.0000   (consistent with Wilson 2008: ~15,000–50,000 LSK CD150-)
+  LMPP = 11910.9375   (consistent with Adolfsson 2005: ~10,000–20,000 LSK Flt3+)
+  CLP  = 29777.3438   (consistent with Rodrigues 2005: ~20,000–30,000 Lin-IL7Rα+Flt3+)
+  DN1  =  1191.0938   (ETP pool in BM before blood egress)
+  flux =    59.5547   cells·day⁻¹
 
-Transit amplification: r_MPP > 0 allows MPP export flux to exceed HSC input flux.
-  λ_MPP = d_MPP_LMPP + d_MPP_death − r_MPP = 0.020 day⁻¹  (stability: λ_MPP > 0 required)
+v5 → v6 change: initial state is now computed analytically via _compute_steady_state()
+  instead of reading rounded integer values from parameters.yaml.  This eliminates the
+  tiny but matplotlib-visible drift caused by the CLP slow mode (τ ≈ 31 days) combined
+  with a ~0.66-cell IC rounding error.
+
+Transit amplification: r_MPP ≈ d_MPP_LMPP + d_MPP_death (near-balanced).
+  λ_MPP = d_MPP_LMPP + d_MPP_death − r_MPP = 0.001 day⁻¹  (stability: λ_MPP > 0 required)
 
 CI-95 note for MPP: the near-balanced regime means true Jacobian sensitivity
-  coefficients S(r_MPP) = r_MPP/λ_MPP ≈ 10.  _mpp_ci95 uses the standard
+  coefficients S(r_MPP) = r_MPP/λ_MPP ≈ 199.  _mpp_ci95 uses the standard
   relative-σ formula (S = 1) as a conservative lower bound on uncertainty.
 
 Orchestrator compatibility:
@@ -68,7 +78,7 @@ class BMHaematopoiesis(ModelBase):
     """Bone marrow 5-compartment ODE model (HSC → MPP → LMPP → CLP → DN1)."""
 
     MODEL_ID      = "bm_haematopoiesis"
-    MODEL_VERSION = "4"
+    MODEL_VERSION = "6"
     DELTA_T_S     = 21_600.0   # 6 hours in seconds
 
     def __init__(self, port: str, output_dir: Path) -> None:
@@ -85,13 +95,40 @@ class BMHaematopoiesis(ModelBase):
         self._p_ci   = {k: v["ci_95"]  for k, v in cfg["parameters"].items()}
         self._p_meta = cfg["parameters"]
 
-        ic = cfg["initial_conditions"]
-        # State: [HSC, MPP, LMPP, CLP, DN1]
-        self._state = np.array(
-            [ic["HSC"], ic["MPP"], ic["LMPP"], ic["CLP"], ic["DN1"]],
-            dtype=float,
-        )
+        # Initialise at analytical steady-state (exact floats, not rounded integers).
+        # This eliminates the matplotlib-visible drift caused by the CLP slow mode
+        # (τ ≈ 31 days) when the IC was rounded to the nearest integer.
+        self._state = self._compute_steady_state()
         self._sim_time_s: float = 0.0
+
+    # ------------------------------------------------------------------
+    # Analytical steady-state initialisation
+
+    def _compute_steady_state(self) -> np.ndarray:
+        """Return [HSC, MPP, LMPP, CLP, DN1] at analytical fixed point (dX/dt = 0).
+
+        Closed-form cascade solution:
+          HSC*  = K_niche × (1 − (d_HSC_MPP + d_apop) / r_self)
+          MPP*  = d_HSC_MPP × HSC* / λ_MPP           where λ_MPP = d_MPP_LMPP + d_MPP_death − r_MPP
+          LMPP* = f_lymphoid × d_MPP_LMPP × MPP* / (d_LMPP_CLP + d_LMPP_death)
+          CLP*  = d_LMPP_CLP × LMPP* / (alpha_T + d_CLP_other + d_CLP_death)
+          DN1*  = alpha_T × CLP* / export_rate
+
+        Raises ValueError if λ_MPP ≤ 0 (unstable / unbounded MPP pool).
+        """
+        p = self._p
+        HSC  = p["K_niche"] * (1.0 - (p["d_HSC_MPP"] + p["d_apop"]) / p["r_self"])
+        lam  = p["d_MPP_LMPP"] + p["d_MPP_death"] - p["r_MPP"]
+        if lam <= 0.0:
+            raise ValueError(
+                f"MPP net loss λ_MPP = {lam:.6g} day⁻¹ ≤ 0 — "
+                "system is unstable; check r_MPP < d_MPP_LMPP + d_MPP_death"
+            )
+        MPP  = p["d_HSC_MPP"] * HSC / lam
+        LMPP = p["f_lymphoid"] * p["d_MPP_LMPP"] * MPP / (p["d_LMPP_CLP"] + p["d_LMPP_death"])
+        CLP  = p["d_LMPP_CLP"] * LMPP / (p["alpha_T"] + p["d_CLP_other"] + p["d_CLP_death"])
+        DN1  = p["alpha_T"] * CLP / p["export_rate"]
+        return np.array([HSC, MPP, LMPP, CLP, DN1])
 
     # ------------------------------------------------------------------
     # ODE system
@@ -298,12 +335,12 @@ class BMHaematopoiesis(ModelBase):
         CLP: float,
         DN1: float,
     ) -> bool:
-        """Out-of-domain flag: HSC niche bounds + non-negativity for all others."""
+        """Out-of-domain flag based on v5 equilibrium bounds."""
         return bool(
-            HSC  < 500 or HSC > 50_000
-            or MPP  < 0
-            or LMPP < 0
-            or CLP  < 0
+            HSC  < 500    or HSC  > 50_000
+            or MPP  < 100    or MPP  > 500_000
+            or LMPP < 100    or LMPP > 200_000
+            or CLP  < 100    or CLP  > 300_000
             or DN1  < 0
         )
 
@@ -320,7 +357,7 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
-    parser = argparse.ArgumentParser(description="OISA — BM Haematopoiesis model (v4)")
+    parser = argparse.ArgumentParser(description="OISA — BM Haematopoiesis model (v6)")
     parser.add_argument("--port",       default="tcp://*:5010",
                         help="ZMQ REP bind address")
     parser.add_argument("--output-dir", default="logs/run/issl",

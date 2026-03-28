@@ -202,7 +202,7 @@ class ThymusSelection(ModelBase):
     """Thymic T-cell selection ABM."""
 
     MODEL_ID = "thymus_selection"
-    MODEL_VERSION = "2"
+    MODEL_VERSION = "3"
     DELTA_T_S = 86_400.0  # 24 h
 
     def __init__(self, port: str, output_dir: Path,
@@ -220,6 +220,7 @@ class ThymusSelection(ModelBase):
         self._p_ci = {k: v["ci_95"] for k, v in cfg["parameters"].items()}
         self._p_meta = cfg["parameters"]
         self._tcr_cfg = cfg["tcr_affinity"]
+        self._scaling_factor: float = float(self._p.get("scaling_factor", 1.0))
         self._n_realisations: int = cfg["abm"]["n_realisations"]
         self._substep_h: int = cfg["abm"]["substep_h"]
         self._steps_per_checkpoint = int(24 / self._substep_h)
@@ -333,6 +334,13 @@ class ThymusSelection(ModelBase):
 
         n_real = self._n_realisations
         exported_mean, exported_ci = r["exported"]
+        sf = self._scaling_factor
+
+        def _scale(val: float) -> float:
+            return round(val * sf, 1)
+
+        def _scale_ci(ci: list[float]) -> list[float]:
+            return [round(ci[0] * sf, 1), round(ci[1] * sf, 1)]
 
         return {
             "envelope": {
@@ -342,46 +350,49 @@ class ThymusSelection(ModelBase):
                 "schema_uri":    "schemas/issl_v1.schema.json",
                 "formalism":     "ABM",
             },
+            # counts are scaled (ABM agent count × scaling_factor) to give
+            # biologically realistic cell numbers.  Raw agent counts are
+            # preserved in internal_parameters (raw_*_agents fields).
             "continuous_state": [
                 {
                     "entity_class": "obo",
                     "entity_id":    _ID_DN1,
                     "label":        "Double-negative thymocytes (DN1-DN4)",
-                    "count":        round(r["dn"][0], 1),
+                    "count":        _scale(r["dn"][0]),
                     "unit":         "cells",
                     "fitness":      None,
                     "surface_markers": ["CD44+", "CD25+/-", "CD117+"],
-                    "ci_95":        r["dn"][1],
+                    "ci_95":        _scale_ci(r["dn"][1]),
                 },
                 {
                     "entity_class": "obo",
                     "entity_id":    _ID_DP,
                     "label":        "Double-positive thymocytes",
-                    "count":        round(r["dp"][0], 1),
+                    "count":        _scale(r["dp"][0]),
                     "unit":         "cells",
                     "fitness":      None,
                     "surface_markers": ["CD4+", "CD8+", "TCRαβ+"],
-                    "ci_95":        r["dp"][1],
+                    "ci_95":        _scale_ci(r["dp"][1]),
                 },
                 {
                     "entity_class": "obo",
                     "entity_id":    _ID_CD4SP,
                     "label":        "CD4+ single-positive thymocytes",
-                    "count":        round(r["cd4sp"][0], 1),
+                    "count":        _scale(r["cd4sp"][0]),
                     "unit":         "cells",
                     "fitness":      None,
                     "surface_markers": ["CD4+", "CD8-", "TCRαβhi"],
-                    "ci_95":        r["cd4sp"][1],
+                    "ci_95":        _scale_ci(r["cd4sp"][1]),
                 },
                 {
                     "entity_class": "obo",
                     "entity_id":    _ID_CD8SP,
                     "label":        "CD8+ single-positive thymocytes",
-                    "count":        round(r["cd8sp"][0], 1),
+                    "count":        _scale(r["cd8sp"][0]),
                     "unit":         "cells",
                     "fitness":      None,
                     "surface_markers": ["CD4-", "CD8+", "TCRαβhi"],
-                    "ci_95":        r["cd8sp"][1],
+                    "ci_95":        _scale_ci(r["cd8sp"][1]),
                 },
             ],
             "discrete_events": [
@@ -412,12 +423,18 @@ class ThymusSelection(ModelBase):
             ],
             "export_signals": [
                 {
-                    "signal_id": "thymus_selection.naive_T_export",
-                    "entity_id": _ID_NAIVE,
-                    "flux":      round(exported_mean, 2),
-                    "unit":      "cells·checkpoint^-1",
-                    "lag_s":     None,
-                    "ci_95":     exported_ci,
+                    # flux is at RAW ABM scale (agents·checkpoint⁻¹) for
+                    # orchestrator / PLN coupling.
+                    # Biological estimate = flux × scaling_factor.
+                    "signal_id":              "thymus_selection.naive_T_export",
+                    "entity_id":              _ID_NAIVE,
+                    "flux":                   round(exported_mean, 2),
+                    "unit":                   "agents·checkpoint^-1",
+                    "lag_s":                  None,
+                    "ci_95":                  exported_ci,
+                    "scaling_factor":         sf,
+                    "biological_flux_per_day": round(exported_mean * sf, 0),
+                    "biological_unit":        "cells·day^-1",
                 }
             ],
             "internal_parameters": [
@@ -429,6 +446,43 @@ class ThymusSelection(ModelBase):
                     "source":   self._p_meta[k].get("source", ""),
                 }
                 for k, v in self._p.items()
+            ] + [
+                # Raw ABM agent counts — multiply by scaling_factor for biological estimate
+                {
+                    "param_id": "raw_dn_agents",
+                    "value":    round(r["dn"][0], 1),
+                    "unit":     "agents",
+                    "ci_95":    r["dn"][1],
+                    "source":   "ABM realisation mean",
+                },
+                {
+                    "param_id": "raw_dp_agents",
+                    "value":    round(r["dp"][0], 1),
+                    "unit":     "agents",
+                    "ci_95":    r["dp"][1],
+                    "source":   "ABM realisation mean",
+                },
+                {
+                    "param_id": "raw_cd4sp_agents",
+                    "value":    round(r["cd4sp"][0], 1),
+                    "unit":     "agents",
+                    "ci_95":    r["cd4sp"][1],
+                    "source":   "ABM realisation mean",
+                },
+                {
+                    "param_id": "raw_cd8sp_agents",
+                    "value":    round(r["cd8sp"][0], 1),
+                    "unit":     "agents",
+                    "ci_95":    r["cd8sp"][1],
+                    "source":   "ABM realisation mean",
+                },
+                {
+                    "param_id": "raw_exported_agents",
+                    "value":    round(exported_mean, 2),
+                    "unit":     "agents·checkpoint^-1",
+                    "ci_95":    exported_ci,
+                    "source":   "ABM realisation mean",
+                },
             ],
             "watchdog": self._make_watchdog(
                 sim_time_s,

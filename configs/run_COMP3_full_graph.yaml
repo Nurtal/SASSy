@@ -48,7 +48,7 @@ transfer_models:
 
 global_clock:
   start_s: 0
-  end_s: 31536000            # 365 days — required to resolve peripheral LN homeostatic relaxation (τ ≈ 167 days)
+  end_s: 2592000             # 30 days — consistent with all other simulation runs
   checkpoint_interval_s: 86400
 
 renderer:

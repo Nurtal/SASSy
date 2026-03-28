@@ -87,16 +87,25 @@ class PeripheralLN(ModelBase):
 
     def _step(self, sim_time_s: float, signals: list[dict]) -> None:
         """Advance the ODE by one DELTA_T_S, incorporating any import signals."""
-        # Update import rates from incoming signals
+        # Update import rates from incoming signals.
+        # The thymus emits biological_flux_per_day (real cells/day after scaling).
+        # We apply lymph_node_fraction to route the per-LN share.
         for sig in signals:
-            if "flux" in sig:
-                flux_per_checkpoint = float(sig["flux"])
-                # flux is cells·checkpoint^-1 from thymus; convert to cells/day
-                flux_per_day = flux_per_checkpoint  # thymus emits per 24-h checkpoint
-                self._last_import_rate = flux_per_day
-                self._import_cd4 = flux_per_day * self._p["cd4_fraction"]
-                self._import_cd8 = flux_per_day * (1.0 - self._p["cd4_fraction"])
-                break
+            if "flux" not in sig:
+                continue
+            # Prefer pre-scaled biological flux; fall back to raw flux × scaling_factor
+            if sig.get("biological_flux_per_day") is not None:
+                total_bio_flux = float(sig["biological_flux_per_day"])
+            elif sig.get("scaling_factor") is not None:
+                total_bio_flux = float(sig["flux"]) * float(sig["scaling_factor"])
+            else:
+                total_bio_flux = float(sig["flux"])
+            # Scale to this LN compartment
+            flux_per_day = total_bio_flux * self._p["lymph_node_fraction"]
+            self._last_import_rate = flux_per_day
+            self._import_cd4 = flux_per_day * self._p["cd4_fraction"]
+            self._import_cd8 = flux_per_day * (1.0 - self._p["cd4_fraction"])
+            break
 
         t_start_d = sim_time_s / 86_400
         t_end_d = (sim_time_s + self.DELTA_T_S) / 86_400

@@ -893,3 +893,369 @@ Lag désormais cohérent avec la littérature murine. ✓
 |--------|--------------|------------------------|
 | COMP2 `results/COMP2/latest/` | 344 555 s (3.99 j) ✓ | 4.30 cells |
 | COMP3 `results/COMP3/latest/` | 344 555 s (3.99 j) ✓ | 4.28–4.30 cells |
+
+---
+
+## 2026-03-28 — Recalibration à l'échelle biologique (BM v5 + Thymus v3 + scaling factor)
+
+### Contexte
+
+Les paramètres des modèles BM et Thymus étaient calibrés à une échelle très
+réduite par rapport aux valeurs publiées dans la littérature murine. En
+particulier :
+- Compartiments BM (MPP, LMPP, CLP) sous-estimés de 2 à 100× vs littérature
+- Modèle Thymus sans facteur d'échelle documenté → flux d'export non
+  interprétable biologiquement
+
+### Objectif
+
+1. BM v5 : paramètres et conditions initiales calés sur les ordres de grandeur
+   publiés (cellules totales dans la moelle de souris adulte C57BL/6)
+2. Thymus v3 : introduction d'un `scaling_factor` dans le fichier ISSL pour
+   relier le compte ABM réduit aux effectifs biologiques réels
+3. Vérification de la cohérence des valeurs simulées avec la littérature
+4. Vérification des temps de transfert (blood transit, homing périphérique)
+5. Régénération des figures (tous les scénarios)
+
+---
+
+### BM v5 — Recalibration (paramètres modifiés)
+
+#### Changements de paramètres
+
+| Paramètre | v4 | v5 | Justification |
+|-----------|----|----|---------------|
+| `r_MPP` | 0.200 | **0.199** | λ_MPP = 0.001 au lieu de 0.020 → MPP amplifié ~27× |
+| `d_MPP_death` | 0.070 | **0.050** | Apoptose MPP réduite (Wilson 2008 BrdU data) |
+| `alpha_T` | 0.080 | **0.002** | Engagement T-lineage ~6 % des CLP (Allman 2003) |
+| `d_CLP_other` | 0.050 | **0.020** | Réajusté pour équilibre CLP |
+| `export_rate` | 0.150 | **0.050** | ETPs résidents BM plus longtemps avant éjection |
+
+#### Nouvelles conditions initiales (équilibre analytique vérifié)
+
+| Compartiment | v4 (avant) | v5 (après) | Littérature murine |
+|---|---|---|---|
+| HSC | 9 075 | 9 075 | ~10 000 (Bhatt 2016) ✓ |
+| MPP | 1 361 | **27 225** | ~15 000–50 000 (Wilson 2008) ✓ |
+| LMPP | 595 | **11 911** | ~10 000–20 000 (Adolfsson 2005) ✓ |
+| CLP | 340 | **29 778** | ~20 000–30 000 (Rodrigues 2005) ✓ |
+| DN1/ETP | 181 | **1 191** | Pool BM pré-éjection ✓ |
+| **Flux export** | 27.2 /j | **59.6 /j** | 10–100 /j (Bhandoola 2007) ✓ |
+
+#### Distribution des destinées CLP (v5)
+- T-lineage : **6.2 %** → ~60 ETP/j ✓
+- B/NK lineage : 62.5 %
+- Apoptose : 31.2 %
+
+#### Vérification numérique
+```
+λ_MPP = 0.150 + 0.050 − 0.199 = 0.001 day⁻¹
+MPP_eq = (0.003 × 9 075) / 0.001 = 27 225 ✓
+flux_eq = 0.002 × 29 778 = 59.56 cells/day ✓
+```
+
+---
+
+### Thymus v3 — Facteur d'échelle
+
+#### Principe
+
+Le thymus murin contient ~5×10⁷ thymocytes (Scollay & Godfrey 1995), non
+simulables en ABM. L'ABM opère à ~150 agents à l'état stationnaire (avec
+~60 ETP/j d'entrée BM). Le **scaling_factor = 300 000** relie les deux :
+
+```
+cellules_réelles ≈ agents_ABM × 300 000
+```
+
+**Dérivation :**
+- Thymus réel : 5×10⁷ thymocytes
+- État stationnaire ABM estimé : ~167 agents
+- 5×10⁷ / 167 ≈ 3×10⁵
+
+Le facteur capture implicitement l'amplification intra-thymique (~30–50 divisions
+de l'ETP au stade SP en biologie).
+
+#### Implémentation dans le fichier ISSL
+
+Le fichier ISSL émis par le thymus contient désormais :
+
+| Champ | Emplacement | Valeur |
+|-------|-------------|--------|
+| `scaling_factor` | `internal_parameters` | 300 000 |
+| `raw_dn_agents`, `raw_dp_agents`, etc. | `internal_parameters` | comptes ABM bruts |
+| `continuous_state[*].count` | — | valeurs **scalées** (agents × 300 000) |
+| `export_signals[0].flux` | — | flux **brut ABM** (pour le couplage orchestrateur/PLN) |
+| `export_signals[0].biological_flux_per_day` | — | flux biologique estimé (flux × 300 000) |
+
+#### Résultats à l'état stationnaire (jour 30, baseline_import=60/j)
+
+| Variable | Simulé (scalé) | Littérature murine |
+|----------|----------------|-------------------|
+| DN total | ~7 M | ~1.5 M (ratio élevé : staging DN simplifié) |
+| DP | ~1.7 M | ~42 M (attendu ; ABM sans amplification DP explicite) |
+| SP total | ~3 M | ~6 M (×2, raisonnable) |
+| **Export** | **~1 M cells/j** | **1–2 M/j ✓** |
+
+---
+
+### Temps de transfert — Vérification
+
+| Transfert | Valeur simulée | Littérature |
+|-----------|---------------|------------|
+| BM → Thymus (blood transit) | **~3.99 jours** (lag_s ≈ 344 555 s) | 1–4 j (Schwarz & Bhandoola 2004) ✓ |
+| Thymus → PLN (homing) | **2 jours** (constante 172 800 s) | quelques heures–2 j (Butcher & Picker 1996) ✓ |
+
+> **Note** : Le lag blood transit observé dans les nouvelles simulations est
+> ~95.7 h ≈ 4 jours (inchangé par rapport à v4 car les paramètres `blood_transit`
+> n'ont pas été modifiés).
+
+---
+
+### Fichiers modifiés
+
+| Fichier | Nature |
+|---------|--------|
+| `models/bm_haematopoiesis/parameters.yaml` | v4 → v5 : 5 paramètres + conditions initiales |
+| `models/bm_haematopoiesis/model.py` | VERSION "4" → "5", docstring, bornes OOD |
+| `models/thymus_selection/parameters.yaml` | v2 → v3 : `scaling_factor`, `baseline_import` 100→60 |
+| `models/thymus_selection/model.py` | VERSION "2" → "3", `emit_issl` + scaling |
+| `results/plot_results.py` | Mise à jour figures : thymus en ×10⁶, titres v5/v3 |
+| `run_and_plot.py` | Nouveau : runner in-process + générateur de figures |
+| `README.md` | Mise à jour descriptions modèles BM v5 et Thymus v3 |
+
+### Runs de référence
+
+Simulations régénérées in-process (`python run_and_plot.py`) :
+
+| Scénario | Répertoire | Flux BM eq. | Flux Thymus (scalé) |
+|----------|-----------|------------|---------------------|
+| BM1 | `results/BM1_baseline/BM1_baseline/` | 59.6 cells/j | — |
+| THY1 | `results/THY1_baseline/THY1_baseline/` | — | ~1.0 M cells/j |
+| COMP1 | `results/COMP1_direct/COMP1_direct/` | 59.6 | ~1.0 M |
+| COMP2 | `results/COMP2_transfer/COMP2_transfer/` | 59.6 | ~1.0 M (lag ~4 j) |
+| COMP3 | `results/COMP3_full_graph/COMP3_full_graph/` | 59.6 | ~1.0 M → PLN |
+
+Figures régénérées dans `results/figures/` (fig1–fig6).
+
+
+---
+
+## 2026-03-28 — COMP3 : durée ramenée de 365 à 30 jours
+
+### Contexte
+
+La simulation COMP3 (`run_COMP3_full_graph.yaml`) était configurée à 365 jours
+alors que toutes les autres simulations (BM1, THY1, COMP1, COMP2) tournent sur
+30 jours. Cette incohérence rendait les comparaisons inter-scénarios difficiles
+et la figure 5 non comparable aux figures 3 et 4.
+
+### Modification
+
+`configs/run_COMP3_full_graph.yaml` :
+```
+end_s: 31536000  →  end_s: 2592000   # 365 j → 30 j
+```
+
+Le commentaire précédent indiquait que 365 j étaient « requis pour résoudre la
+relaxation homéostatique du PLN (τ ≈ 167 j) ». Cette contrainte est levée : la
+figure 5 montre désormais le transitoire d'établissement sur 30 jours, cohérent
+avec les autres figures.
+
+### Résultats COMP3 à j 30
+
+| Variable | Valeur |
+|----------|--------|
+| BM export flux | 59.6 cells/j |
+| Transit lag (blood) | ~95.7 h ≈ 4 jours |
+| Thymus export (scalé) | ~725 K cells/j |
+| PLN CD4 naïf | ~183 552 cells |
+| PLN CD8 naïf | ~91 777 cells |
+| Ratio CD4/CD8 | ~2.0 ✓ |
+
+Le ratio CD4/CD8 ≈ 2:1 est cohérent avec les données murines.
+Le PLN n'a pas encore atteint son set-point (S4 = 200 000) après 30 jours car
+le signal thymique pénètre avec un lag BM→thymus (~4 j) + thymus→PLN (2 j).
+
+### Fichiers modifiés
+
+| Fichier | Modification |
+|---------|-------------|
+| `configs/run_COMP3_full_graph.yaml` | `end_s` 31 536 000 → 2 592 000 |
+| `results/COMP3_full_graph/COMP3_full_graph/issl/` | Données ISSL régénérées (30 j) |
+| `results/figures/` | Toutes les figures régénérées (fig1–fig6) |
+
+
+---
+
+## 2026-03-28 — Bug fig2 : panneau "Naïve T export" vide dans THY1 baseline
+
+### Symptôme
+
+Le panneau `gs[1, 1]` de la figure 2 (`fig2_THY1_baseline.png`) restait vide malgré la présence d'un export de cellules T naïves dans les résultats de simulation (affiché en console : `THY1 done — export: 3.3 agents/cp (~1 000 000 cells/day scaled)`).
+
+### Cause racine
+
+Dans `results/plot_results.py`, le tableau `stage_info` de `fig_thy1_baseline()` incluait :
+
+```python
+("CL:0000898", "Naïve T export", PALETTE["export"], gs[1, 1]),
+```
+
+`get_entity_series(thy, "CL:0000898")` recherche dans `continuous_state` des checkpoints ISSL. Or `CL:0000898` (naïve T cell) n'est **jamais** dans `continuous_state` du modèle thymus — il apparaît uniquement dans `export_signals`. La fonction renvoyait donc des tableaux vides → panneau blanc.
+
+### Correction
+
+1. **Nouveau helper `get_bio_export_flux(issl_records)`** ajouté dans `plot_results.py` : lit `biological_flux_per_day` dans `export_signals[0]`, avec fallback sur `flux * scaling_factor`.
+
+2. **Panneau `gs[1, 1]` réécrit** : remplace l'entrée bogée dans `stage_info` par un subplot dédié qui appelle `get_bio_export_flux(thy)` et affiche le flux biologique en ×10⁶ cellules·jour⁻¹.
+
+### Note biologique
+
+Les 3–4 premiers jours restent à zéro — comportement attendu : les thymocytes doivent traverser DN (≥1 j) → DP (~20 sous-pas) → sélection positive → séjour médullaire (`medullary_dwell_steps=72` à 1 h/sous-pas = 3 j minimum) avant export.
+
+### Fichiers modifiés
+
+| Fichier | Modification |
+|---------|-------------|
+| `results/plot_results.py` | Ajout `get_bio_export_flux()` ; panneau THY1 `gs[1,1]` corrigé |
+| `results/figures/fig2_THY1_baseline.png` | Régénérée avec export visible |
+
+---
+
+## 2026-03-28 — BM v6 : initialisation au steady-state analytique exact
+
+### Symptôme
+
+La figure 1 montrait une légère dérive croissante du flux d'export BM (inset panel) sur 30 jours. Matplotlib auto-scale le flux et rendait une variation de ~0.004 cells/day visuellement significative.
+
+### Cause racine
+
+Les conditions initiales dans `parameters.yaml` (v5) étaient des entiers arrondis calculés par cascade manuelle :
+
+| Compartiment | IC entière (v5) | Vrai SS analytique | Erreur |
+|---|---|---|---|
+| HSC  |  9075     |  9075.0000  |  0.0000 |
+| MPP  | 27225     | 27225.0000  |  0.0000 |
+| LMPP | 11911     | 11910.9375  | +0.0625 |
+| CLP  | 29778     | 29777.3438  | +0.6563 |
+| DN1  |  1191     |  1191.0938  | −0.0938 |
+
+L'erreur de CLP (+0.66 cells) excitait le mode lent du compartiment CLP (τ ≈ 1/0.032 = 31 jours), produisant une dérive monotone du flux sur toute la durée de la simulation. Bien qu'infime en valeur absolue (0.007%), elle était visuellement évidente après auto-scaling matplotlib.
+
+### Correction
+
+`BMHaematopoiesis.__init__` appelle maintenant `_compute_steady_state()` au lieu de lire les ICs du YAML :
+
+```python
+def _compute_steady_state(self) -> np.ndarray:
+    p = self._p
+    HSC  = p["K_niche"] * (1.0 - (p["d_HSC_MPP"] + p["d_apop"]) / p["r_self"])
+    lam  = p["d_MPP_LMPP"] + p["d_MPP_death"] - p["r_MPP"]
+    # raises ValueError if lam ≤ 0 (unstable regime)
+    MPP  = p["d_HSC_MPP"] * HSC / lam
+    LMPP = p["f_lymphoid"] * p["d_MPP_LMPP"] * MPP / (p["d_LMPP_CLP"] + p["d_LMPP_death"])
+    CLP  = p["d_LMPP_CLP"] * LMPP / (p["alpha_T"] + p["d_CLP_other"] + p["d_CLP_death"])
+    DN1  = p["alpha_T"] * CLP / p["export_rate"]
+    return np.array([HSC, MPP, LMPP, CLP, DN1])
+```
+
+Résultat vérifié : flux constant à 59.5547 cells/day sur 30 jours (dérive = 0.00e+00).
+
+La ligne de référence dans la figure 1 est aussi corrigée : 59.6 → 59.5547.
+
+### Fichiers modifiés
+
+| Fichier | Modification |
+|---|---|
+| `models/bm_haematopoiesis/model.py` | v5→v6 ; ajout `_compute_steady_state()` ; init SS analytique |
+| `models/bm_haematopoiesis/parameters.yaml` | v5→v6 ; ICs corrigées (float SS) ; note doc-only |
+| `results/plot_results.py` | Référence flux 59.6 → 59.5547 ; titre fig1 v5→v6 |
+| `results/figures/` | Toutes les figures régénérées |
+
+---
+
+## 2026-03-28 — PLN : bug import thymus (scaling_factor absent) + ratio CD4/CD8
+
+### Symptôme
+
+Dans COMP3, le ratio CD4/CD8 était figé à exactement 2.000 sur 30 jours, et les pools déclinaient régulièrement de −8% (~200 000 → 183 500 pour CD4).
+
+### Analyse
+
+**Bug 1 — import biologique non appliqué**
+
+`_step()` du modèle PLN lisait `sig["flux"]` (2.42 agents ABM/jour) en lieu et place de `sig["biological_flux_per_day"]` (725 000 cellules/jour). Le facteur de scaling (300 000) du modèle thymus n'était pas transmis au PLN. Import effectif reçu : **1.6 cellules/jour** au lieu de ~923 cellules/jour.
+
+**Bug 2 — paramètre lymph_node_fraction absent**
+
+Sans fraction de distribution, le PLN recevait (incorrectement) 100 % de l'output thymus plutôt que la part distribuée à un compartiment LN unique.
+
+**Conséquence sur la dynamique**
+
+L'équilibre Borghans-De Boer sans import est :
+```
+CD4* = ρ₄ × S4 / (ρ₄ + d_total) = 0.003 × 200 000 / 0.006 = 100 000
+```
+Avec ρ₄ = d_total = 0.003 jour⁻¹, le système déclinait vers S4/2 (τ ≈ 167 jours). Sur 30 jours : −8% attendu, −8.2% observé ✓.
+
+Le ratio 2.000 exact était un artefact : avec import ≈ 0 et S4 = 2×S8, ρ₄ = ρ₈, la symétrie algébrique conserve le rapport CD4/CD8 à exactement 2.000.
+
+### Correction
+
+**`models/peripheral_ln/parameters.yaml`** — Ajout :
+```yaml
+lymph_node_fraction:
+  value: 0.0013   # calibré : 923 cells/day requis / ~700 000 cells/day thymus
+```
+
+**`models/peripheral_ln/model.py`** — `_step()` corrigé :
+```python
+if sig.get("biological_flux_per_day") is not None:
+    total_bio_flux = float(sig["biological_flux_per_day"])
+elif sig.get("scaling_factor") is not None:
+    total_bio_flux = float(sig["flux"]) * float(sig["scaling_factor"])
+else:
+    total_bio_flux = float(sig["flux"])
+flux_per_day = total_bio_flux * self._p["lymph_node_fraction"]
+```
+
+### Résultat après correction
+
+| Métrique | Avant (buggy) | Après (corrigé) |
+|---|---|---|
+| CD4 à jour 30 | 183 552 (−8.2%) | 193 424 (−3.3%) |
+| CD8 à jour 30 |  91 777 (−8.2%) |  97 093 (−2.8%) |
+| Ratio à jour 30 | 2.000 (figé) | 1.992 (converge vers ~1.92) |
+| Import CD4 reçu | 1.6 cells/day | ~612 cells/day |
+
+La décroissance résiduelle de −3% est attendue : sur 30 jours (< τ/5), les pools n'ont pas encore atteint leur équilibre asymptotique (~202 000 / 105 000 avec flux thymus en régime établi).
+
+### Fichiers modifiés
+
+| Fichier | Modification |
+|---|---|
+| `models/peripheral_ln/parameters.yaml` | Ajout `lymph_node_fraction: 0.0013` |
+| `models/peripheral_ln/model.py` | `_step()` : lecture `biological_flux_per_day`, application `lymph_node_fraction` |
+| `results/figures/` | Figures régénérées |
+
+---
+
+## 2026-03-28 — Régénération des figures + mise à jour README (session BM v6 / PLN fix)
+
+Figures régénérées avec `run_and_plot.py --figs` après les corrections de cette session :
+
+| Figure | Changements visibles |
+|---|---|
+| `fig1_BM1_baseline.png` | Flux export plat à 59.5547 cells/day (plus de dérive) ; référence horizontale corrigée (59.6 → 59.5547) |
+| `fig2_THY1_baseline.png` | Panneau Naïve T export désormais affiché (lecture `biological_flux_per_day` depuis `export_signals`) |
+| `fig3_COMP1_direct.png` | Export BM démarrant au SS exact |
+| `fig4_COMP2_transfer.png` | Idem |
+| `fig5_COMP3_full_graph.png` | PLN : pools CD4/CD8 maintenus (~−3% en 30 j au lieu de −8%) ; ratio 2.000 → 1.992 (dynamique réelle) |
+| `fig6_comparative.png` | Toutes courbes cohérentes avec les corrections ci-dessus |
+
+README mis à jour :
+- BM : version v5 → v6 ; valeurs SS exactes (LMPP 11910.94, CLP 29777.34, DN1 1191.09, flux 59.55) ; mention de l'initialisation analytique
+- Thymus : calibration citée BM v6 ; note sur `CL:0000898` dans `export_signals` uniquement
+- PLN : étape 2 réécrite (lecture `biological_flux_per_day`, `lymph_node_fraction`) ; étape 7 (calibration, équilibre Borghans, ratio long-terme ~1.92)
+- Chemins de logs : BM_haematopoiesis_v5 → v6
