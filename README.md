@@ -259,7 +259,7 @@ The orchestrator emits its own log format — the **OISSL** (Orchestrator ISSL) 
 
 **Biological scope:** Models the bone marrow niche from HSC self-renewal through multipotent progenitor commitment to early T-lineage progenitor (DN1 / ETP) export. Does not model myeloid or B-cell lineages explicitly; they are included as a competing-fate sink term.
 
-**Model version:** v6 (5-compartment, literature-scale calibration, analytical steady-state initialisation). Species: *Mus musculus* C57BL/6, wild-type adult (8–12 weeks).
+**Model version:** v7 (5-compartment, literature-scale calibration, analytical SS initialisation, Monte Carlo CI-95). Species: *Mus musculus* C57BL/6, wild-type adult (8–12 weeks).
 
 **Step-by-step model construction:**
 
@@ -277,11 +277,13 @@ The orchestrator emits its own log format — the **OISSL** (Orchestrator ISSL) 
 
 7. **Analytical steady-state initialisation (v6).** Rather than reading fixed integer initial conditions from a YAML file, the model computes the exact analytical fixed point of the ODE system in `_compute_steady_state()` at every startup. This ensures that the model starts precisely at equilibrium regardless of parameter values, eliminating the slow transient drift that would otherwise appear in the export flux panel due to the CLP compartment's long relaxation time (τ ≈ 31 days).
 
-8. **ISSL emission.** At each checkpoint (`delta_t_s = 21600`, i.e. every 6 hours), the model serialises all five compartment values with first-order relative-σ `ci_95` (propagated from parameter posterior variances), the surface marker profiles of each population, and the current parameter estimates. The `export_signals` section contains the DN1 export flux with entity ID `CL:0002420` (signal ID: `bm_haematopoiesis.progenitor_export`). These identifiers are stable across model versions and are required for orchestrator signal routing.
+8. **ISSL emission.** At each checkpoint (`delta_t_s = 21600`, i.e. every 6 hours), the model serialises all five compartment values with Monte Carlo `ci_95` (pre-computed at startup from parameter posterior distributions — see step 9), the surface marker profiles of each population, and the current parameter estimates. The `export_signals` section contains the DN1 export flux with entity ID `CL:0002420` (signal ID: `bm_haematopoiesis.progenitor_export`). These identifiers are stable across model versions and are required for orchestrator signal routing.
 
-9. **Parameter calibration.** All kinetic parameters are drawn from published murine haematopoiesis literature (Busch et al. 2015, Adolfsson et al. 2005, Bhandoola et al. 2007, Wilson et al. 2008, Rodrigues et al. 2005 — see `models/bm_haematopoiesis/parameters.yaml`). CI-95 bounds use first-order relative-σ propagation; for MPP in the near-balanced regime (true sensitivity S(r_MPP) ≈ 199), a conservative S=1 bound is reported as a documented lower bound on uncertainty.
+9. **CI-95 via Monte Carlo propagation (v7).** The near-balanced MPP regime (λ_MPP = 0.001 day⁻¹) invalidates first-order linear CI propagation. The true sensitivity of MPP to r_MPP is S = r_MPP/λ_MPP = **199**, and ~48% of the parameter 95%-CI space gives λ_MPP ≤ 0 (unstable regime with no finite equilibrium). The model pre-computes CI-95 in `_compute_mc_ci95()` by sampling 2 000 parameter sets from N(μ, σ), retaining draws with λ_MPP > 0 (~51% stable), and reporting the 2.5th/97.5th percentiles. The resulting CI is heavily right-skewed for MPP and all downstream compartments (median MPP ≈ 1 850, 97.5th percentile ≈ 39 000). The export flux CI [1.4, 90.9] cells·day⁻¹ spans the entire published murine range. The ISSL watchdog includes `lambda_mpp`, `ci_stability_fraction`, `ci_n_stable`, and `ci_n_total`.
 
-**Key outputs logged in ISSL:** HSC, MPP, LMPP, CLP, DN1 counts (literature-scale); DN1 export flux (cells·day⁻¹); `ci_95` on all compartments; parameter posteriors.
+10. **Parameter calibration.** All kinetic parameters are drawn from published murine haematopoiesis literature (Busch et al. 2015, Adolfsson et al. 2005, Bhandoola et al. 2007, Wilson et al. 2008, Rodrigues et al. 2005 — see `models/bm_haematopoiesis/parameters.yaml`).
+
+**Key outputs logged in ISSL:** HSC, MPP, LMPP, CLP, DN1 counts (literature-scale); DN1 export flux (cells·day⁻¹); MC CI-95 on all compartments; parameter posteriors; λ_MPP stability fraction.
 
 ---
 
@@ -398,7 +400,7 @@ python orchestrator/main.py --config configs/run_COMP3_full_graph.yaml \
 ```
 
 Output is written to `logs/COMP3/`:
-- `logs/COMP3/issl/BM_haematopoiesis_v6/` — per-checkpoint ISSL records from Model 1
+- `logs/COMP3/issl/BM_haematopoiesis_v7/` — per-checkpoint ISSL records from Model 1
 - `logs/COMP3/issl/Thymus_selection_v3/` — per-checkpoint ISSL records from Model 3
 - (... etc. for all models)
 - `logs/COMP3/oissl/` — per-checkpoint OISSL records from the orchestrator
@@ -436,7 +438,7 @@ To load and inspect all checkpoints for a single model:
 ```python
 from analysis.utils.oissl_parser import load_issl_series
 
-records = load_issl_series("logs/COMP3/issl/BM_haematopoiesis_v6/")
+records = load_issl_series("logs/COMP3/issl/BM_haematopoiesis_v7/")
 
 # records is a list of dicts, one per checkpoint, sorted by sim_time_s
 hsc_counts = [r["continuous_state"][0]["count"] for r in records]

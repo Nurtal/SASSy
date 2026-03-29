@@ -41,7 +41,7 @@
 #   The _mpp_ci95 helper uses S=1 as a conservative lower bound on CI width.
 
 model_id: bm_haematopoiesis
-model_version: "6"
+model_version: "7"
 
 # Analytical steady-state (documentation only — model computes these from parameters):
 initial_conditions:

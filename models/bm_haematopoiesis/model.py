@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Model 1 — Bone Marrow Haematopoiesis (ODE, v6 — 5-compartment)
+Model 1 — Bone Marrow Haematopoiesis (ODE, v7 — 5-compartment)
 
 State vector: [HSC, MPP, LMPP, CLP, DN1]
 
@@ -15,7 +15,7 @@ ODEs (all rates in day⁻¹; converted from seconds before integration):
 Export flux (cells/day): export_rate × DN1  ≈ 59.55 at equilibrium
   (within murine literature range 10–100 cells·day⁻¹; Bhandoola et al. 2007)
 
-Analytical steady-state (computed from parameters; v6 exact floats):
+Analytical steady-state (computed from parameters; v7 exact floats):
   HSC  =  9075.0000   (consistent with Bhatt 2016: ~10,000 LSK CD150+CD48-)
   MPP  = 27225.0000   (consistent with Wilson 2008: ~15,000–50,000 LSK CD150-)
   LMPP = 11910.9375   (consistent with Adolfsson 2005: ~10,000–20,000 LSK Flt3+)
@@ -23,17 +23,27 @@ Analytical steady-state (computed from parameters; v6 exact floats):
   DN1  =  1191.0938   (ETP pool in BM before blood egress)
   flux =    59.5547   cells·day⁻¹
 
-v5 → v6 change: initial state is now computed analytically via _compute_steady_state()
-  instead of reading rounded integer values from parameters.yaml.  This eliminates the
-  tiny but matplotlib-visible drift caused by the CLP slow mode (τ ≈ 31 days) combined
-  with a ~0.66-cell IC rounding error.
+v6 → v7 change: CI-95 replaced by Monte Carlo parameter propagation.
+  Why: the near-balanced MPP regime (λ_MPP = 0.001 day⁻¹) makes first-order
+  linear CI propagation invalid.  The true sensitivity of MPP to r_MPP is
+  S = r_MPP/λ_MPP ≈ 199, which the former S=1 formula underestimated by 2 orders
+  of magnitude.  Moreover ~48% of the parameter 95%-CI space gives λ_MPP ≤ 0
+  (unstable/divergent MPP), so no finite analytical CI exists for MPP or any
+  downstream compartment.  _compute_mc_ci95() samples 2 000 parameter sets
+  from N(μ, σ) (σ = CI-width/3.92), retains stable draws (λ_MPP > 0), and
+  reports the 2.5th/97.5th percentiles.  Stability fraction (~51%) is stored in
+  the ISSL watchdog.
+
+  MC CI at nominal parameters (2 000 stable draws):
+    HSC  : [ 7 235,  10 894]
+    MPP  : [   570,  43 603]   (heavily right-skewed; median ~2 000)
+    LMPP : [   269,  19 350]
+    CLP  : [   650,  48 557]
+    DN1  : [    22,   2 006]
+    flux : [  1.1,   101.3]  cells·day⁻¹  (spans full literature range)
 
 Transit amplification: r_MPP ≈ d_MPP_LMPP + d_MPP_death (near-balanced).
   λ_MPP = d_MPP_LMPP + d_MPP_death − r_MPP = 0.001 day⁻¹  (stability: λ_MPP > 0 required)
-
-CI-95 note for MPP: the near-balanced regime means true Jacobian sensitivity
-  coefficients S(r_MPP) = r_MPP/λ_MPP ≈ 199.  _mpp_ci95 uses the standard
-  relative-σ formula (S = 1) as a conservative lower bound on uncertainty.
 
 Orchestrator compatibility:
   export_signals[0].signal_id = "bm_haematopoiesis.progenitor_export"  (unchanged)
@@ -49,7 +59,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import math
 from pathlib import Path
 
 import numpy as np
@@ -78,7 +87,7 @@ class BMHaematopoiesis(ModelBase):
     """Bone marrow 5-compartment ODE model (HSC → MPP → LMPP → CLP → DN1)."""
 
     MODEL_ID      = "bm_haematopoiesis"
-    MODEL_VERSION = "6"
+    MODEL_VERSION = "7"
     DELTA_T_S     = 21_600.0   # 6 hours in seconds
 
     def __init__(self, port: str, output_dir: Path) -> None:
@@ -96,10 +105,13 @@ class BMHaematopoiesis(ModelBase):
         self._p_meta = cfg["parameters"]
 
         # Initialise at analytical steady-state (exact floats, not rounded integers).
-        # This eliminates the matplotlib-visible drift caused by the CLP slow mode
-        # (τ ≈ 31 days) when the IC was rounded to the nearest integer.
         self._state = self._compute_steady_state()
         self._sim_time_s: float = 0.0
+
+        # Pre-compute Monte Carlo CI-95 once (parameter uncertainty propagation).
+        # Stored as a dict: {"HSC":[lo,hi], "MPP":[lo,hi], ..., "flux":[lo,hi],
+        #                    "n_stable": int, "n_total": int}
+        self._ci95 = self._compute_mc_ci95()
 
     # ------------------------------------------------------------------
     # Analytical steady-state initialisation
@@ -129,6 +141,62 @@ class BMHaematopoiesis(ModelBase):
         CLP  = p["d_LMPP_CLP"] * LMPP / (p["alpha_T"] + p["d_CLP_other"] + p["d_CLP_death"])
         DN1  = p["alpha_T"] * CLP / p["export_rate"]
         return np.array([HSC, MPP, LMPP, CLP, DN1])
+
+    def _compute_mc_ci95(self, n_samples: int = 2_000, seed: int = 42) -> dict:
+        """Monte Carlo CI-95 via vectorised parameter sampling.
+
+        Samples all parameters jointly from N(μ, σ) where σ = (ci_hi−ci_lo)/3.92.
+        Draws are rejected when λ_MPP = d_MPP_LMPP + d_MPP_death − r_MPP ≤ 0
+        (unstable regime) or when any parameter is non-positive.  The 2.5th and
+        97.5th percentiles of the retained draws give the CI.
+
+        Returns
+        -------
+        dict with keys "HSC","MPP","LMPP","CLP","DN1","flux" → [lo, hi]
+             and "n_stable" (int), "n_total" (int).
+        """
+        rng  = np.random.default_rng(seed)
+        keys = list(self._p.keys())
+        mu   = np.array([self._p[k]        for k in keys])
+        cis  = np.array([self._p_ci[k]     for k in keys])
+        sig  = (cis[:, 1] - cis[:, 0]) / (2.0 * 1.96)
+
+        names  = ("HSC", "MPP", "LMPP", "CLP", "DN1", "flux")
+        store  = {k: [] for k in names}
+        n_total = 0
+        chunk   = 500
+
+        while len(store["HSC"]) < n_samples and n_total < n_samples * 60:
+            batch = rng.normal(mu, sig, size=(chunk, len(keys)))
+            n_total += chunk
+            pp = {k: batch[:, i] for i, k in enumerate(keys)}
+
+            lam   = pp["d_MPP_LMPP"] + pp["d_MPP_death"] - pp["r_MPP"]
+            HSC_v = pp["K_niche"] * (1.0 - (pp["d_HSC_MPP"] + pp["d_apop"]) / pp["r_self"])
+            valid = (lam > 0) & np.all(batch > 0, axis=1) & (HSC_v > 0)
+
+            lam   = lam[valid]
+            HSC_v = HSC_v[valid]
+            pv    = {k: pp[k][valid] for k in keys}
+
+            MPP_v  = pv["d_HSC_MPP"] * HSC_v / lam
+            LMPP_v = pv["f_lymphoid"] * pv["d_MPP_LMPP"] * MPP_v / (pv["d_LMPP_CLP"] + pv["d_LMPP_death"])
+            CLP_v  = pv["d_LMPP_CLP"] * LMPP_v / (pv["alpha_T"] + pv["d_CLP_other"] + pv["d_CLP_death"])
+            DN1_v  = pv["alpha_T"] * CLP_v / pv["export_rate"]
+            flux_v = pv["export_rate"] * DN1_v
+
+            for name, arr in zip(names, [HSC_v, MPP_v, LMPP_v, CLP_v, DN1_v, flux_v]):
+                store[name].extend(arr.tolist())
+
+        result: dict = {
+            "n_stable": len(store["HSC"]),
+            "n_total":  n_total,
+        }
+        for name in names:
+            arr = np.array(store[name][:n_samples])
+            result[name] = [round(float(np.percentile(arr, 2.5)),  2),
+                            round(float(np.percentile(arr, 97.5)), 2)]
+        return result
 
     # ------------------------------------------------------------------
     # ODE system
@@ -179,15 +247,14 @@ class BMHaematopoiesis(ModelBase):
 
         export_flux = p["export_rate"] * DN1   # cells/day
 
-        # CI-95 — first-order relative-σ propagation (see module docstring)
-        ci_export = self._flux_ci95(DN1, export_flux)
-        ci_hsc    = self._state_ci95(HSC,  "r_self", "K_niche")
-        ci_mpp    = self._mpp_ci95(MPP)
-        ci_lmpp   = self._state_ci95(LMPP, "f_lymphoid", "d_MPP_LMPP",
-                                     "d_LMPP_CLP", "d_LMPP_death")
-        ci_clp    = self._state_ci95(CLP,  "d_LMPP_CLP", "alpha_T",
-                                     "d_CLP_other", "d_CLP_death")
-        ci_dn1    = self._state_ci95(DN1,  "alpha_T", "export_rate")
+        # CI-95 — Monte Carlo parameter propagation (pre-computed in __init__).
+        # See _compute_mc_ci95 and module docstring for rationale.
+        ci_hsc    = self._ci95["HSC"]
+        ci_mpp    = self._ci95["MPP"]
+        ci_lmpp   = self._ci95["LMPP"]
+        ci_clp    = self._ci95["CLP"]
+        ci_dn1    = self._ci95["DN1"]
+        ci_export = self._ci95["flux"]
 
         return {
             "envelope": {
@@ -270,59 +337,23 @@ class BMHaematopoiesis(ModelBase):
                 }
                 for k, v in p.items()
             ],
-            "watchdog": self._make_watchdog(
-                sim_time_s,
-                ood_flag=self._is_ood(HSC, MPP, LMPP, CLP, DN1),
-                divergence_score=self._divergence(HSC),
-            ),
+            "watchdog": {
+                **self._make_watchdog(
+                    sim_time_s,
+                    ood_flag=self._is_ood(HSC, MPP, LMPP, CLP, DN1),
+                    divergence_score=self._divergence(HSC),
+                ),
+                "ci_method": "monte_carlo",
+                "ci_n_stable": self._ci95["n_stable"],
+                "ci_n_total":  self._ci95["n_total"],
+                "ci_stability_fraction": round(
+                    self._ci95["n_stable"] / max(self._ci95["n_total"], 1), 4
+                ),
+                "lambda_mpp": round(
+                    p["d_MPP_LMPP"] + p["d_MPP_death"] - p["r_MPP"], 6
+                ),
+            },
         }
-
-    # ------------------------------------------------------------------
-    # CI-95 helpers
-
-    def _state_ci95(self, value: float, *param_keys: str) -> list[float]:
-        """Approximate CI-95 using first-order relative-σ (diagonal covariance).
-
-        For each parameter p_i with nominal value p_i0 and CI [lo, hi]:
-            σ_rel_i = (hi − lo) / (2 × 1.96 × p_i0)
-        Combined relative σ:
-            σ_rel = sqrt(Σ σ_rel_i²)
-        Absolute σ on the state:
-            σ_abs = σ_rel × value
-
-        All sensitivity coefficients assumed = 1 (first-order linear approx).
-        For MPP in the near-balanced regime, use _mpp_ci95 instead.
-        """
-        variance_rel = 0.0
-        for k in param_keys:
-            ci        = self._p_ci[k]
-            param_val = self._p[k]
-            sigma_rel = (ci[1] - ci[0]) / (2.0 * 1.96 * param_val)
-            variance_rel += sigma_rel ** 2
-        sigma_abs = math.sqrt(variance_rel) * value
-        return [round(value - 1.96 * sigma_abs, 2), round(value + 1.96 * sigma_abs, 2)]
-
-    def _mpp_ci95(self, mpp: float) -> list[float]:
-        """CI-95 for MPP — conservative lower bound for near-balanced regime.
-
-        The true Jacobian sensitivity coefficients are:
-            S(r_MPP)      = r_MPP      / λ_MPP ≈ 0.20/0.02 = 10
-            S(d_MPP_LMPP) = d_MPP_LMPP / λ_MPP ≈ 0.15/0.02 =  7.5
-            S(d_MPP_death)= d_MPP_death / λ_MPP ≈ 0.07/0.02 =  3.5
-
-        Using S = 10 gives CI that reaches negative values.  We use S = 1
-        (standard _state_ci95) as a conservative lower bound.  The result is
-        narrower than the true posterior, so treat MPP CI as indicative only.
-        """
-        return self._state_ci95(mpp, "r_MPP", "d_MPP_LMPP", "d_MPP_death")
-
-    def _flux_ci95(self, dn1: float, flux: float) -> list[float]:
-        """CI-95 for export flux = export_rate × DN1, from export_rate uncertainty."""
-        p    = self._p
-        ci   = self._p_ci["export_rate"]
-        σ_er = (ci[1] - ci[0]) / (2.0 * 1.96)
-        σ_f  = dn1 * σ_er
-        return [round(flux - 1.96 * σ_f, 4), round(flux + 1.96 * σ_f, 4)]
 
     # ------------------------------------------------------------------
     # Watchdog helpers
@@ -357,7 +388,7 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
-    parser = argparse.ArgumentParser(description="OISA — BM Haematopoiesis model (v6)")
+    parser = argparse.ArgumentParser(description="OISA — BM Haematopoiesis model (v7)")
     parser.add_argument("--port",       default="tcp://*:5010",
                         help="ZMQ REP bind address")
     parser.add_argument("--output-dir", default="logs/run/issl",

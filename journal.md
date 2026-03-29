@@ -1259,3 +1259,71 @@ README mis à jour :
 - Thymus : calibration citée BM v6 ; note sur `CL:0000898` dans `export_signals` uniquement
 - PLN : étape 2 réécrite (lecture `biological_flux_per_day`, `lymph_node_fraction`) ; étape 7 (calibration, équilibre Borghans, ratio long-terme ~1.92)
 - Chemins de logs : BM_haematopoiesis_v5 → v6
+
+---
+
+## 2026-03-28 — BM v7 : remplacement CI-95 linéaire S=1 par Monte Carlo
+
+### Symptôme
+
+Les barres d'erreur CI-95 du modèle BM étaient fausses ("aux fraises") sur tous les compartiments.
+
+### Diagnostic (trois problèmes imbriqués)
+
+**1. P(λ_MPP ≤ 0) = 47.9 %**
+λ_MPP = d_MPP_LMPP + d_MPP_death − r_MPP = 0.001 jour⁻¹ (très proche de zéro).
+σ(λ_MPP) = √(σ²_d_MPP_LMPP + σ²_d_MPP_death + σ²_r_MPP) = 0.0191.
+Soit z = 0.001/0.0191 = 0.052 → P(λ ≤ 0) = Φ(−0.052) ≈ 48 %.
+Presque la moitié de l'espace paramétrique CI-95 donne un système instable (MPP diverge). Il n'existe donc aucune CI analytique finie pour MPP.
+
+**2. Sensibilité S = 1 utilisée, vraie valeur S = 199**
+La formule `_state_ci95` supposait ∂MPP/∂p × p/MPP = 1 pour tous les paramètres.
+La vraie sensibilité de MPP à r_MPP est :
+```
+S(r_MPP→MPP) = r_MPP / λ_MPP = 0.199/0.001 = 199
+S(d_MPP_LMPP→MPP) = 0.150/0.001 = 150
+S(d_MPP_death→MPP) = 0.050/0.001 = 50
+```
+L'ancienne formule sous-estimait la CI de MPP d'un facteur ~100–200.
+
+**3. Propagation amont absente pour LMPP, CLP, DN1, flux**
+Les CI de tous les compartiments aval ne comprenaient pas les incertitudes sur r_MPP/d_MPP_LMPP/d_MPP_death, qui dominent la cascade via S = 150–199.
+
+### CI obtenues avec les trois méthodes
+
+| Compartiment | Ancienne CI (S=1) | CI correcte S linéaire | MC CI (cond. stabilité) |
+|---|---|---|---|
+| MPP  | [14 973, 39 477] | [−245 000, +299 000] | [587, 39 308] |
+| flux | [57.9, 61.2]     | inapplicable          | [1.4, 90.9]  |
+
+La CI linéaire correcte donne des bornes négatives → inutilisable. Le MC conditionnel est la seule approche valide.
+
+### Correction (BM v7)
+
+Remplacement des méthodes `_state_ci95`, `_mpp_ci95`, `_flux_ci95` par `_compute_mc_ci95()` :
+- Échantillonnage vectorisé de 2 000 jeux de paramètres N(μ, σ)
+- Rejet des tirages avec λ_MPP ≤ 0 ou paramètres non-positifs (~48 % des tirages)
+- Percentiles 2.5/97.5 sur les tirages valides
+- Précompilé une fois dans `__init__`, résultats stockés dans `self._ci95`
+
+Ajout dans le watchdog ISSL de `lambda_mpp`, `ci_stability_fraction`, `ci_n_stable`, `ci_n_total`.
+
+### Résultat
+
+```
+MC CI (n_stable=2068/4000, stability=51.7%)
+  HSC   : [  7820,  10401]
+  MPP   : [   587,  39308]   ← asymétrique : médiane ~1850, pas ~27225
+  LMPP  : [   288,  17428]
+  CLP   : [   713,  44207]
+  DN1   : [    27,   1942]
+  flux  : [   1.4,   90.9]  cells·day⁻¹  (couvre toute la plage littérature)
+```
+
+### Fichiers modifiés
+
+| Fichier | Modification |
+|---|---|
+| `models/bm_haematopoiesis/model.py` | v6→v7 ; ajout `_compute_mc_ci95()` ; suppression des anciens helpers CI |
+| `models/bm_haematopoiesis/parameters.yaml` | v6→v7 |
+| `results/figures/` | Figures régénérées avec CI correctes |
