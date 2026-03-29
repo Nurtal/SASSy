@@ -1327,3 +1327,70 @@ MC CI (n_stable=2068/4000, stability=51.7%)
 | `models/bm_haematopoiesis/model.py` | v6→v7 ; ajout `_compute_mc_ci95()` ; suppression des anciens helpers CI |
 | `models/bm_haematopoiesis/parameters.yaml` | v6→v7 |
 | `results/figures/` | Figures régénérées avec CI correctes |
+
+---
+
+## 2026-03-28 — Corrections affichage pré-soumission (4 bugs)
+
+### Problème 1 — CI-95 du Naïve T export non mise à l'échelle (thymus_selection)
+
+**Symptôme :** La CI-95 du flux d'export thymique affichée dans les figures était `[0, 5]`
+ou `[0, 6]` au lieu de `[0, 1 500 000]`, rendant la bande d'incertitude invisible.
+
+**Cause :** Dans `models/thymus_selection/model.py`, `exported_ci` était stocké en agents
+ABM bruts (échelle 1:300 000) sans multiplication par `scaling_factor`.
+
+**Correctif :**
+```python
+# Avant
+"ci_95": exported_ci,
+# Après
+"ci_95": [round(exported_ci[0] * sf, 0),
+           round(exported_ci[1] * sf, 0)],
+```
+
+---
+
+### Problème 2 — Axe Y trop serré sur le flux BM dans la figure comparative (fig6)
+
+**Symptôme :** L'axe Y affichait `[57, 62]` pour un flux stable à 59.5 cells/day,
+rendant une variation de ±2 % visuellement dramatique.
+
+**Correctif :** Ajout de `axes[0].set_ylim(bottom=0)` dans `fig_comparative()`.
+
+---
+
+### Problème 3 — Axe Y trop serré sur le ratio CD4/CD8 dans COMP3 (fig5)
+
+**Symptôme :** L'axe Y affichait `[1.992, 2.000]` pour un ratio biologiquement stable.
+
+**Correctif :** Ajout de `ax_ratio.set_ylim(0, 3.0)` dans `fig_comp3_full_graph()`.
+
+---
+
+### Problème 4 — Label « Unknown » dans la légende des événements de sélection
+
+**Symptôme :** `get_discrete_events()` cherchait la clé `event_id` dans les événements
+discrets, mais le modèle thymique émet la clé `event_type`. De plus, `ev_colors` mappait
+`"clonal_deletion"` alors que le modèle émet `"negative_selection"`.
+
+**Correctifs dans `results/plot_results.py` :**
+1. `get_discrete_events()` : `ev.get("event_id", "unknown")` → `ev.get("event_type", ev.get("event_id", "unknown"))`
+2. `ev_colors` (dans `fig_thy1_baseline` et `fig_comp3_full_graph`) : `"clonal_deletion"` → `"negative_selection"`
+
+---
+
+### Correctif mineur — suptitle BM v6 → v7
+
+Mis à jour le suptitle de `fig_bm1_baseline` de "v6" à "v7".
+
+---
+
+### Fichiers modifiés
+
+| Fichier | Modification |
+|---|---|
+| `models/thymus_selection/model.py` | CI-95 export multiplié par scaling_factor |
+| `results/plot_results.py` | 4 correctifs affichage + suptitle v7 |
+| `results/figures/` | Toutes les figures régénérées |
+| `results/OISA_simulation_report.pdf` | Rapport PDF régénéré (1.3 MB) |
